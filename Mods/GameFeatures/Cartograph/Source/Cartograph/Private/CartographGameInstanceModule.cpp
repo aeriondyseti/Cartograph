@@ -287,10 +287,17 @@ void UCartographGameInstanceModule::OnWorldLoaded(UWorld* World)
 				TArray<TWeakObjectPtr<AFGBuildable>> Factories;
 				Algo::Transform(AFGBuildableSubsystem::Get(World)->GetAllBuildablesRef(), Factories,
 					[](AFGBuildable* Buildable) { return Buildable; });
-				Coroutine = InitialBuildableGather(
+				// The gather starts the first redraw when it's done, which it can be before it has returned
+				// from here. That redraw is the one that's running then, and not the gather that's through.
+				const uint32 Generation = ++CoroutineGeneration;
+				UE5Coro::TCoroutine<> Gather = InitialBuildableGather(
 					std::move(Factories),
 					AFGLightweightBuildableSubsystem::Get(World)->mBuildableClassToInstanceArray
 				);
+				if (CoroutineGeneration == Generation)
+				{
+					Coroutine = MoveTemp(Gather);
+				}
 			});
 	}
 
@@ -1038,7 +1045,14 @@ void UCartographGameInstanceModule::ReleaseRenderTargetResource()
 void UCartographGameInstanceModule::ExecuteRedrawMapCoroutine(bool bRedrawEntirely)
 {
 	bRedrawCancelRequested = false;
-	Coroutine = RedrawMapCoroutine(PendingAddBuildingData, PendingRemoveBuildingData, bRedrawEntirely);
+
+	// Taken before it's started: it can be through before it has returned from here, and have started
+	// the one after it on its way out. That one is the one that's running then.
+	TArray<FBuildingData> AddedBuildingData = MoveTemp(PendingAddBuildingData);
+	TArray<FBuildingData> RemovedBuildingData = MoveTemp(PendingRemoveBuildingData);
+	PendingAddBuildingData.Reset();
+	PendingRemoveBuildingData.Reset();
+
 	if (!IsClient)
 	{
 		if (!ACartographModSubsystem::Instance)
@@ -1047,11 +1061,16 @@ void UCartographGameInstanceModule::ExecuteRedrawMapCoroutine(bool bRedrawEntire
 		}
 		else
 		{
-			ACartographModSubsystem::Instance->ClientUpdateBuildingData(PendingAddBuildingData, PendingRemoveBuildingData);
+			ACartographModSubsystem::Instance->ClientUpdateBuildingData(AddedBuildingData, RemovedBuildingData);
 		}
 	}
-	PendingAddBuildingData.Empty();
-	PendingRemoveBuildingData.Empty();
+
+	const uint32 Generation = ++CoroutineGeneration;
+	UE5Coro::TCoroutine<> Redraw = RedrawMapCoroutine(MoveTemp(AddedBuildingData), MoveTemp(RemovedBuildingData), bRedrawEntirely);
+	if (CoroutineGeneration == Generation)
+	{
+		Coroutine = MoveTemp(Redraw);
+	}
 }
 
 

@@ -493,6 +493,9 @@ protected:
 	bool IsRedrawingEntirely = false;
 	// The redraw that's running has been asked to stop, which it only does once it gets to it
 	bool bRedrawCancelRequested = false;
+	// Goes up with every gather or redraw that's started, to tell whether one has started another
+	// before it has returned to where it was started from
+	uint32 CoroutineGeneration = 0;
 	FBox2D RedrawArea;
 
     bool IsClient = false;
