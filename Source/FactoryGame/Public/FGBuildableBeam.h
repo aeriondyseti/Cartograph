@@ -66,9 +66,10 @@ public:
 
 	float GetLength() const { return mLength; }
 	void SetLength( float NewLength );
-protected:
+
 	/** Returns the dismantle returns multiplier based on the beam length */
 	int32 GetDismantleReturnsMultiplierForBeam( float beamLength ) const;
+protected:
 	/** Populates the instance data for the beam */
 	void PopulateBeamInstanceData( float beamLength, TArray<FInstanceData>& outInstanceData ) const;
 	
@@ -79,6 +80,10 @@ protected:
 	/** Default length of the beam. Used to properly scale the beam later. */
 	UPROPERTY( EditDefaultsOnly, Category = "Beam" )
 	float mDefaultLength;
+	
+	/** Length of the beam for its build cost. For example, if the beam is 8 meters, and this is 4 meters, you will pay 2x the recipe ingredients for beam construction */
+	UPROPERTY( EditDefaultsOnly, Category = "Beam" )
+	float mLengthPerCost{400.0f};
 
 	/** Max allowed length of the beam. */
 	UPROPERTY( EditDefaultsOnly, Category = "Beam" )

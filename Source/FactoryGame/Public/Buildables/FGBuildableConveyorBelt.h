@@ -52,7 +52,7 @@ public:
 	
 	// Begin Buildable interface
 	virtual int32 GetDismantleRefundReturnsMultiplier() const override;
-	virtual void OnBuildEffectFinished() override;
+	virtual void OnLegacyBuildEffectFinished() override;
 	virtual void OnSkinCustomizationApplied_Implementation( TSubclassOf< class UFGFactoryCustomizationDescriptor_Skin > skin ) override;
 	// End Buildable interface
 

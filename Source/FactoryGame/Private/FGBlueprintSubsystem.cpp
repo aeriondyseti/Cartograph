@@ -94,8 +94,6 @@ FString AFGBlueprintSubsystem::SanitizeBlueprintFileName(const FString& blueprin
 FString AFGBlueprintSubsystem::SanitizeBlueprintFolderName(const FString& folderName) { return FString(); }
 void AFGBlueprintSubsystem::GatherRecipeObjectRefsForBuildableArray(const TArray< AFGBuildable* >& buildables, TArray< FObjectReferenceDisc >& out_recipeRefs){ }
 AFGBuildableBlueprintDesigner* AFGBlueprintSubsystem::IsLocationInsideABlueprintDesigner(const FVector& hitLocation){ return nullptr; }
-void AFGBlueprintSubsystem::NotifyBuildableWithBlueprintBuildIDSet( AFGBuildable* buildable, int32 id){ }
-void AFGBlueprintSubsystem::NotifyRuntimeInstanceWithBlueprintBuildIDSet(int32 buildEffectId, int32 runtimeIndex, TSubclassOf<class AFGBuildable> buildableClass){  }
 void AFGBlueprintSubsystem::ReceiveBlueprintFileDownload(const FBlueprintRecord& blueprintRecord, const TArray<uint8>& filePayload){  }
 void AFGBlueprintSubsystem::OnRep_BlueprintCategoryRecords(){ }
 bool AFGBlueprintSubsystem::AreRecipeRequirementsMetForBlueprint(const FBlueprintHeader& header){ return bool(); }
@@ -124,7 +122,6 @@ void AFGBlueprintSubsystem::RemoveRawDataForFile(const FString& fileName){ }
 void AFGBlueprintSubsystem::CalculateBlueprintCustomizationCost(const TArray<AFGBuildable*>& buildables, TArray<FItemAmount>& out_cost) const{ }
 void AFGBlueprintSubsystem::OnRep_ServerManifest(){ }
 void AFGBlueprintSubsystem::Multicast_BroadcastBlueprintRecordChanges_Implementation(const TArray< FBlueprintRecord >& records){ }
-void AFGBlueprintSubsystem::Multicast_AddBlueprintBuildEffectData_Implementation(const FBlueprintBuildEffectData& buildeffectData){ }
 void AFGBlueprintSubsystem::Multicast_DeleteBlueprintDescriptor_Implementation(const FString& blueprintName){ }
 void AFGBlueprintSubsystem::AddOrModifyEntryToServerManifest(const FString& fileName, const FString& hash){ }
 void AFGBlueprintSubsystem::GenerateClientServerManifestDiff(){ }

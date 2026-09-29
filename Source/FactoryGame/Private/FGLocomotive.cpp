@@ -53,6 +53,7 @@ bool AFGLocomotive::IsInputEnabled() const{ return bool(); }
 void AFGLocomotive::Input_ThrottleAxis_Started(const FInputActionValue& actionValue){ }
 void AFGLocomotive::Input_ThrottleAxis(const FInputActionValue& actionValue){ }
 void AFGLocomotive::Input_SteerAxis(const FInputActionValue& actionValue){ }
+void AFGLocomotive::Input_SteerAxis_Completed(const FInputActionValue& actionValue){ }
 void AFGLocomotive::Input_Handbrake(const FInputActionValue& actionValue){ }
 void AFGLocomotive::Input_Honk(const FInputActionValue& actionValue){ }
 void AFGLocomotive::Input_OpenLocomotiveMenu(const FInputActionValue& actionValue){ }

@@ -234,6 +234,9 @@ public:
 	void SetMaxZoopAmount( int32 amount );
 
 	void SetZoopAmount( const FIntVector& Zoop );
+	
+	/** Set hologram to snap to guide lines */
+	virtual void SetSnapToGuideLines( bool isEnabled ) override;
 
 	/** Function called ervery frame when zooping instead of the usual positioning logic. Allows setting zoop amount through SetZoopAmount() based on hitresult. Zooping happens in local space of the hologram. */
 	virtual void SetZoopFromHitresult( const FHitResult& hitResult );
@@ -548,7 +551,7 @@ protected:
 	/** Whether or not to hide guideline visuals for this hologram. */
 	bool mHideGuidelineVisuals;
 
-	UPROPERTY( ReplicatedUsing = OnRep_CustomizationData )
+	UPROPERTY( CustomSerialization, ReplicatedUsing = OnRep_CustomizationData )
 	FFactoryCustomizationData mCustomizationData;
 
 	int32 mSelectedHologramAttachmentPointIndex;

@@ -149,8 +149,14 @@ void AFGBuildableSubsystem::TickFactoryActors(float dt){ }
 void AFGBuildableSubsystem::UpdateConveyorRenderType(FString cvar){ }
 void AFGBuildableSubsystem::RequestBuildEffectActor(UObject* WorldContext, AFGBuildEffectActor*& BuildEffectActor, TSubclassOf< AFGBuildEffectActor > TemplateClass, FTransform Transform, AActor* instigator, bool bForceSolo){ }
 UFGColoredInstanceManager* AFGBuildableSubsystem::GetColoredInstanceManager( UFGColoredInstanceMeshProxy* proxy){ return nullptr; }
+void AFGBuildableSubsystem::RegisterBuildableWithBlueprintBuildEffect(int32 blueprintBuildEffectID, AFGBuildable* buildable){ }
+void AFGBuildableSubsystem::RegisterLightweightWithBlueprintBuildEffect(int32 blueprintBuildEffectID, const TSubclassOf<AFGBuildable>& buildableClass, int32 runtimeIndex, const FTransform& buildableTransform){ }
+void AFGBuildableSubsystem::NotifyBuildableSkippedBlueprintBuildEffect(int32 blueprintBuildEffectID, const AFGBuildable* buildable){ }
+void AFGBuildableSubsystem::Local_SetPendingBlueprintBuildEffectServerData(int32 blueprintBuildEffectID, const FTransform& originTransform, int32 expectedNumObjects, APawn* buildEffectInstigator){ }
+void AFGBuildableSubsystem::Local_ForceCleanupPendingBlueprintBuildEffect(int32 blueprintBuildEffectID){ }
+FBlueprintBuildEffectData& AFGBuildableSubsystem::FindOrAllocateBlueprintBuildEffect(int32 blueprintBuildEffectID, const FTransform& transform){ return *(new FBlueprintBuildEffectData); }
+void AFGBuildableSubsystem::ProcessPendingBlueprintBuildEffects(){ }
 TSubclassOf< class UFGFactoryCustomizationDescriptor_Swatch > AFGBuildableSubsystem::GetMigrationSwatchForSlot(int32 slotID){ return TSubclassOf<class UFGFactoryCustomizationDescriptor_Swatch>(); }
-bool AFGBuildableSubsystem::IsBasedOn(const UMaterialInterface* instance, const UMaterial* base){ return bool(); }
 const FName AFGBuildableSubsystem::MaterialParameter_ConveyorSpeed = FName();
 uint8 AFGBuildableSubsystem::mCurrentSubStep = uint8();
 uint8 AFGBuildableSubsystem::mCurrentSubStepMax = uint8();

@@ -38,7 +38,7 @@ public:
 	virtual void Dismantle_Implementation() override;
 	virtual bool ShouldBeConsideredForBase_Implementation() override;
 
-	virtual void OnBuildEffectFinished() override;
+	virtual void OnLegacyBuildEffectFinished() override;
 
 	/**
 	 * @return The power circuit this pole is connected to; nullptr if not connected.

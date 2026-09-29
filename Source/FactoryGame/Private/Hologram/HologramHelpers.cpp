@@ -48,7 +48,8 @@ bool FSplineUtils::BuildBendStraightBendSpline2D( FSplineBuilder& builder,
 		float startRadius,
 		float endRadius,
 		const FVector& endPos,
-		const FVector& endForward){ return bool(); }
+		const FVector& endForward,
+		bool bOrthogonalLock){ return bool(); }
 bool FSplineUtils::Build90DegreeSpline2D( FSplineBuilder& builder,
 		float startRadius,
 		float endRadius,

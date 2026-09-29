@@ -59,6 +59,6 @@ private:
     void OnRep_CustomizationData();
 	
 protected:
-	UPROPERTY( ReplicatedUsing = OnRep_CustomizationData )
+	UPROPERTY( CustomSerialization, ReplicatedUsing = OnRep_CustomizationData )
 	FFactoryCustomizationData mCustomizationData;
 };

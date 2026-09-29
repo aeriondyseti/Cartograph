@@ -111,6 +111,9 @@ protected:
 
 	UFUNCTION( NetMulticast, Reliable )
 	void Client_NewItemAddedToCentralStorage( TSubclassOf<UFGItemDescriptor> inClass );
+
+	UFUNCTION( NetMulticast, Reliable )
+	void Client_ItemAmountUpdatedInCentralStorage( TSubclassOf<UFGItemDescriptor> itemClass, int32 newAmount );
 	
 private:
 	bool IsInventoryItemValidForCentralStorage( const FInventoryItem& inventoryItem ) const;

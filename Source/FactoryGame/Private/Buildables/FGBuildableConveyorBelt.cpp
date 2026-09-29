@@ -40,7 +40,7 @@ void AFGBuildableConveyorBelt::LostNetSignificance_Implementation(){ }
 float AFGBuildableConveyorBelt::GetNetSignificanceRange_Implementation() const{ return IFGNetSignificanceInterface::GetNetSignificanceRange_Implementation(); }
 TArray<FInstanceData> AFGBuildableConveyorBelt::GetActorLightweightInstanceData_Implementation() const{ return TArray<FInstanceData>(); }
 int32 AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier() const{ return int32(); }
-void AFGBuildableConveyorBelt::OnBuildEffectFinished(){ }
+void AFGBuildableConveyorBelt::OnLegacyBuildEffectFinished(){ }
 void AFGBuildableConveyorBelt::OnSkinCustomizationApplied_Implementation(TSubclassOf<class UFGFactoryCustomizationDescriptor_Skin> skin){ }
 float AFGBuildableConveyorBelt::FindOffsetClosestToLocation(const FVector& location) const{ return float(); }
 void AFGBuildableConveyorBelt::GetLocationAndDirectionAtOffset(float offset, FVector& out_location, FVector& out_direction) const{ }

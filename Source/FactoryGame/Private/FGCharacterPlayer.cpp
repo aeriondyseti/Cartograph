@@ -408,6 +408,7 @@ void AFGCharacterPlayer::Input_RadialMenuDirectionCursor(const FInputActionValue
 void AFGCharacterPlayer::SetMenuActive(bool IsActive){  }
 void AFGCharacterPlayer::Input_Sprint(const FInputActionValue& actionValue){ }
 void AFGCharacterPlayer::Input_Crouch(const FInputActionValue& actionValue){ }
+void AFGCharacterPlayer::Input_ToggleCrouch(const FInputActionValue& actionValue){ }
 void AFGCharacterPlayer::Input_CycleNextEquipment(const FInputActionInstance& ActionInstance){ }
 void AFGCharacterPlayer::Input_CycleEquipmentAxis(const FInputActionValue& actionValue){ }
 void AFGCharacterPlayer::Input_Holster(const FInputActionValue& ActionValue){ }

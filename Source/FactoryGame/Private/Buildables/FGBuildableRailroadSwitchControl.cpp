@@ -21,7 +21,7 @@ void AFGBuildableRailroadSwitchControl::GetLifetimeReplicatedProps(TArray<FLifet
 void AFGBuildableRailroadSwitchControl::BeginPlay(){ Super::BeginPlay(); }
 void AFGBuildableRailroadSwitchControl::EndPlay(const EEndPlayReason::Type endPlayReason){ Super::EndPlay(endPlayReason); }
 void AFGBuildableRailroadSwitchControl::OnBuildEffectFinished(){ }
-void AFGBuildableRailroadSwitchControl::OnBuildEffectActorFinished(){ }
+void AFGBuildableRailroadSwitchControl::OnLegacyBuildEffectFinished(){ }
 void AFGBuildableRailroadSwitchControl::GainedSignificance_Implementation(){ }
 void AFGBuildableRailroadSwitchControl::LostSignificance_Implementation(){ }
 void AFGBuildableRailroadSwitchControl::PostLoadGame_Implementation(int32 saveVersion, int32 gameVersion){ Super::PostLoadGame_Implementation(saveVersion, gameVersion); }

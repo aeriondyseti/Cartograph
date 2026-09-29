@@ -14,8 +14,9 @@ void AFGBuildableSignSupport::GetLifetimeReplicatedProps(TArray< FLifetimeProper
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AFGBuildableSignSupport, mPoleScale);
 }
+void AFGBuildableSignSupport::PostLoadGame_Implementation(int32 saveVersion, int32 gameVersion){ Super::PostLoadGame_Implementation(saveVersion, gameVersion); }
 void AFGBuildableSignSupport::SetPoleScale(const FVector2D& poleScale){ }
-void AFGBuildableSignSupport::OnBuildEffectActorFinished(){ }
+void AFGBuildableSignSupport::OnBuildEffectFinished(){ }
 bool AFGBuildableSignSupport::CanBeSampled_Implementation() const{ return Super::CanBeSampled_Implementation(); }
 struct FInstanceData AFGBuildableSignSupport::CreatePoleInstanceData(int32 variationIndex) const{ return Super::CreatePoleInstanceData(variationIndex); }
 void AFGBuildableSignSupport::OnRep_PoleScale(){ }

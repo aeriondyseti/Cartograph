@@ -56,8 +56,8 @@ void AFGBuildEffectActor::EndPlay(const EEndPlayReason::Type endPlayReason){ Sup
 void AFGBuildEffectActor::SetDismantle(bool State){ }
 void AFGBuildEffectActor::AddAbstractDataEntry(TSubclassOf< AFGBuildable > buildableClass, const FRuntimeBuildableInstanceData& runtimeData, int32 Index){ }
 void AFGBuildEffectActor::RemoveAbstractDataEntry(TSubclassOf< AFGBuildable > buildableClass, int32 index){ }
-void AFGBuildEffectActor::SetRecipe(TSubclassOf<UFGRecipe> inRecipe, AFGBuildable* buildable){ }
-void AFGBuildEffectActor::SetRecipeFromLightweight(TSubclassOf<UFGRecipe> inRecipe, TSubclassOf<AFGBuildable> buildableClass, const struct FFGDynamicStruct& lightweightTypeSpecificData){ }
+void AFGBuildEffectActor::AddBuildEffectCostFromRecipe(TSubclassOf<UFGRecipe> inRecipe, AFGBuildable* buildable){ }
+void AFGBuildEffectActor::AddBuildEffectCostForLightweight(TSubclassOf<UFGRecipe> inRecipe, TSubclassOf<AFGBuildable> buildableClass, const struct FFGDynamicStruct& lightweightTypeSpecificData){ }
 FBuildEffectEnded& AFGBuildEffectActor::GetBind(UClass* actorClass){ return *(new FBuildEffectEnded); }
 void AFGBuildEffectActor::Start(){ }
 void AFGBuildEffectActor::Stop(){ }

@@ -55,7 +55,7 @@ using IPrivilegesPtr = UE::Online::IPrivilegesPtr;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogPlatformPermission, Log, All);
 
-// Broadcasted once the text permission privileges have been updated
+// Broadcasted once permission privileges have been updated
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPermissionUpdated);
 // Broadcasted when the session member permission map is being updated
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnGDKTextPermissionsChecked, TextPermissionCheckedMap isAllowedToReadMap);
@@ -63,10 +63,6 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnGDKTextPermissionsChecked, TextPermission
 DECLARE_DELEGATE_OneParam(FOnPrivilegeQueryDone, EPrivilegeResults privilegeResult);
 // Separate delegate for premium checking as blueprints cant digest the EPrivilegeResults enum
 DECLARE_DYNAMIC_DELEGATE_OneParam(FUserHasPremiumAccountDelegate, bool, hasPremium);
-
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnPermissionsHaveUpdated, class UFGPlatformPermissionSubsystem* sender);
-
-DECLARE_DYNAMIC_DELEGATE(FPermissionUpdatedDelegate);
 
 UCLASS()
 class UPermissionContext : public UObject
@@ -188,14 +184,16 @@ class FACTORYGAME_API UFGPlatformPermissionSubsystem : public ULocalPlayerSubsys
 		bool isAnonymousTextAllowed;
 	};
 
-	// This is our user cache that is used for XSX to check if a certain user has a certain permission.
+	// Used to keep track of Relational permissions between the local player and another user
+	// on platforms that have relationship dependent content restrictions. (e.g. XSX)
+	// (e.g. Can I see this users UGC? Can I send this user messages?)
 	FPerUserPermissionMap mPermissionMapCache;
-
-	// Contains general permissions like crossplay, ugc, text communication
+	// Contains general permissions like crossplay (allowance), ugc, text communication
 	FGenericPermissionMap mLocalUserPermissionMap;
-	// Used to fill in the crossplay permission for ps5 users in the mPermissionMapCache
+	// Used to fill in Crossplay specific Permissions for platforms that have special permissions for crossplay scenarios (e.g. XSX)
+	// Todo: Can be consolidated into mLocalUserPermissionMap if a proxy enum or crossplay flag is introduced. Right now EUserPrivilege
+	// KeyCollision happens.
 	TOptional<CrossplayPermissionResult> mCrossplayTextPermission;
-	// Used to fill in the UGC permission for ps5 users in the mPermissionMapCache
 	TOptional<CrossplayPermissionResult > mCrossplayUGCPermission;
 
 	////////////////

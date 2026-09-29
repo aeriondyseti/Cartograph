@@ -275,6 +275,8 @@ protected:
 	void OnRepTrunkUser();
 	UFUNCTION()
 	void OnRep_VehicleCombinedLightsState();
+	UFUNCTION()
+	void OnRep_VehicleInProxyMode();
 protected:
 	/** Angular damping strength (multiplier?) that is applied to the vehicle when in the air. Used to stabilize vehicles in the air and prever over-rotation */
 	UPROPERTY( EditDefaultsOnly, BlueprintReadOnly, Category= "Vehicle" )
@@ -470,6 +472,9 @@ protected:
 	float mTimeSinceAccurateVehicleLocation{0.0f};
 
 	/** True if we are currently in proxy mode (e.g. vehicle is hidden, and only proxy mesh is visible) */
-	UPROPERTY( Replicated )
+	UPROPERTY( ReplicatedUsing = OnRep_VehicleInProxyMode )
 	bool mIsVehicleInProxyMode{false};
+
+	/** True if vehicle VFX is currently considered active. Local */
+	bool mVehicleVFXActive{false};
 };

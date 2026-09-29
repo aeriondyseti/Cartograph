@@ -67,7 +67,7 @@ public:
 private:
 	void EnsureTaskComplete();
 
-	void FindAddsRemovesWT( const FVector& PlayerLocation ); // Worker thread
+	void FindAddsRemovesWT( const FVector& PlayerLocation, const double CurrentTime ); // Worker thread
 	void PerformAddsRemovesGT(); // Game thread
 
 private:
@@ -80,4 +80,5 @@ private:
 
 	FGraphEventRef AudioGeometryUpdateTask;
 	float CurrentDistanceRadiusWT = 0.f; // Only used on worker thread
+	double LastRadiusUpdateTimeWT = 0.0; // Only used on worker thread
 };

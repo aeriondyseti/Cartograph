@@ -69,6 +69,10 @@ public:
 	virtual void StopIsAimedAtForColor_Implementation( class AFGCharacterPlayer* byCharacter ) override;
 	// End IFGColorInterface
 
+	// Begin IFGSaveInterface
+	virtual void PostLoadGame_Implementation( int32 saveVersion, int32 gameVersion ) override;
+	// End IFGSaveInterface
+
 	//~ Begin IFGDismantleInterface
 	virtual void GetChildDismantleActors_Implementation( TArray< AActor* >& out_childDismantleActors ) const override;
 	//~ End IFGDismantleInterface
@@ -233,14 +237,6 @@ private:
 	/** Array of objects to ignore when performing the collision check in the indicator placement. This is needed during merge / split creation of new pipelines. */
 	UPROPERTY()
 	TArray< TWeakObjectPtr< const AActor > > mIgnoreActorsForIndicator;
-
-	/** Struct with both wwise safe names and their item names */
-	UPROPERTY( EditDefaultsOnly, Category = "Pipeline|Audio" )
-	TArray< FStringPair > mFluidNames;
-	
-	/** Current fluid that is in the pipe */
-	UPROPERTY()
-	FString mCurrentFluid;
 	
 	/** Last value used for how filled the pipe is. */
 	UPROPERTY()
@@ -282,6 +278,9 @@ private:
 	UPROPERTY( EditDefaultsOnly, Category = "Pipeline|Audio" )
 	float mUpdateSoundsTimerInterval;
 
+	UPROPERTY( ) 
+	TSubclassOf< UFGItemDescriptor > mLastSetAudioFluidDescriptor;
+	
 	/** Cached indicator data. This data is only valid on the client */
 	FPipelineIndicatorData mPipelineIndicatorData;
 };

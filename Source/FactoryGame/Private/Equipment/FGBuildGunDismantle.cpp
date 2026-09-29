@@ -16,7 +16,7 @@ UFGBuildGunStateDismantle::UFGBuildGunStateDismantle() : Super() {
 }
 void UFGBuildGunStateDismantle::GetLifetimeReplicatedProps(TArray<  FLifetimeProperty > & OutLifetimeProps) const {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(UFGBuildGunStateDismantle, mPeekDismantleRefund);
+	DOREPLIFETIME(UFGBuildGunStateDismantle, mPeekDismantleRefundNetworked);
 }
 void UFGBuildGunStateDismantle::BeginState_Implementation(){ }
 void UFGBuildGunStateDismantle::EndState_Implementation(){ }

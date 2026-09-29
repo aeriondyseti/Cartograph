@@ -25,7 +25,7 @@ class FACTORYDEDICATEDSERVER_API UFGServerAuthenticationController : public UFGS
 	GENERATED_BODY()
 
 	// Returns OK if authentication token provided is valid with the given privilege level.
-	UFUNCTION( FGServerRequestHandler, FGServerRequestPrivilegeLevel = "Client" )
+	UFUNCTION( FGServerRequestHandler, FGServerRequestPrivilegeLevel = "NotAuthenticated" )
 	FFGServerErrorResponse Handler_VerifyAuthenticationToken( const FString& AuthenticationToken, EPrivilegeLevel PrivilegeLevel, const FFGRequestHandlerContextWrapper& RequestHandlerContext ) const;
 
 	// Attempts a password-less login when the server is not claimed or when the client password is not set

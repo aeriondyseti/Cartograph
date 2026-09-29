@@ -40,10 +40,28 @@ public class FactorySharedTarget : TargetRules
 		bOverrideAppNameForSharedBuild = true;
 		bOverrideBuildEnvironment = true;
 		bUseLoggingInShipping = true;
-		bUseConsoleInShipping = true;
+		if (/*Target.Platform == UnrealTargetPlatform.PS5 || Target.Platform == UnrealTargetPlatform.XSX*/ false)
+		{
+			bUseConsoleInShipping = false;
+		}
+		else
+		{
+			bUseConsoleInShipping = true;
+		}
 		bAllowGeneratedIniWhenCooked = true;
 		// Enable diagnostics when disabled plugins are being pulled back into the build as dependencies for other plugins
 		CppCompileWarningSettings.DisablePluginsConflictWarningLevel = WarningLevel.Warning;
+
+		// [KapaevV:29/07/2026] Force /Z7 (debug info in the .obj) instead of /Zi (separate PDB per file).
+		// UBA cannot remote mspdbsrv - UbaDetours.Build.cs hardcodes supportMspdbSrv = false - so any
+		// /Zi compile that the scheduler sends to a helper dies with "C1356: unable to find mspdbcore.dll".
+		// UBA's own workaround (patching /FS -> /Z7 in UbaProcess.cpp) cannot fire, because cl.exe args
+		// live in a response file and non-PCH compiles never get /FS in the first place.
+		// These are assigned here rather than left to default so that an agent-local BuildConfiguration.xml
+		// cannot re-enable them: the base TargetRules ctor applies XML config and command-line args before
+		// this ctor body runs, so this assignment always wins. The linker still emits the shippable PDB.
+		bUsePDBFiles = false;
+		bSupportEditAndContinue = false;
 
 		// [ZolotukhinN:10/07/2023] Enabled Network Push Model support in normal game builds, it's disabled in non-editor by default
 		bWithPushModel = true;

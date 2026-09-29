@@ -400,14 +400,6 @@ void AFGBuildable::BeginPlay()
 		}
 	}
 
-	if ( mBlueprintBuildEffectID != INDEX_NONE )
-	{
-		if( AFGBlueprintSubsystem* blueprintSubsystem =  AFGBlueprintSubsystem::Get( GetWorld() ) )
-		{
-			blueprintSubsystem->NotifyBuildableWithBlueprintBuildIDSet( this, mBlueprintBuildEffectID );
-		}
-	}
-
 	AFGBuildableSubsystem* buildableSubsystem = worldSettings->GetBuildableSubsystem();
 
 	// Sync mReplicatedBuiltInsideBlueprintDesigner with the validity of the blueprint designer reference on BeginPlay on the host
@@ -473,12 +465,12 @@ void AFGBuildable::BeginPlay()
 	{
 		if(!bForceLegacyBuildEffect)
 		{
-			ExecutePlayBuildActorEffects();
+			PlayBuildEffect();
 		}
 		else
 		{
 			// ! Legacy build effect, only used in super rare cases we shouldn't rely on this!
-			ExecutePlayBuildEffects();
+			PlayLegacyBuildEffect();
 		}
 	}
 
@@ -1208,11 +1200,6 @@ bool AFGBuildable::HandleLightweightAddition()
 {
 	if( mIsLightweightTemporary )
 	{
-		if( !mBlueprintBuildEffectIsPlaying )
-		{
-			SetReplicates( false );
-		}
-		
 		if( mBlueprintProxy )
 		{
 			mBlueprintProxy->RegisterBuildable( this );
@@ -1753,7 +1740,7 @@ void AFGBuildable::StopIsLookedAtForConnection( class AFGCharacterPlayer* byChar
 		outline->HideOutline( this );
 	}
 }
-void AFGBuildable::PlayBuildEffects( AActor* inInstigator )
+void AFGBuildable::SetBuildEffectInstigator( AActor* inInstigator )
 {
 	// Don't play effects on hidden integrated buildables. i.e. hub upgrades.
 	if( !GetRootComponent()->IsVisible() )
@@ -1764,7 +1751,7 @@ void AFGBuildable::PlayBuildEffects( AActor* inInstigator )
 	mBuildEffectInstignator = inInstigator;
 }
 
-void AFGBuildable::ExecutePlayBuildEffects()
+void AFGBuildable::PlayLegacyBuildEffect()
 {
 	if( ShouldSkipBuildEffect() )
 	{
@@ -1823,7 +1810,7 @@ void AFGBuildable::ExecutePlayBuildEffects()
 		
 		mActiveBuildEffect->SetTransform( GetActorTransform() );
 		mActiveBuildEffect->SetSpeed( mBuildEffectSpeed );
-		mActiveBuildEffect->mOnEnded.BindUObject( this, &AFGBuildable::OnBuildEffectFinished );
+		mActiveBuildEffect->mOnEnded.BindUObject( this, &AFGBuildable::OnLegacyBuildEffectFinished );
 		mActiveBuildEffect->RegisterComponent();
 
 		mBuildEffectIsPlaying = true;
@@ -1838,7 +1825,7 @@ void AFGBuildable::ExecutePlayBuildEffects()
 	}
 }
 
-void AFGBuildable::OnBuildEffectFinished()
+void AFGBuildable::OnLegacyBuildEffectFinished()
 {
 	mBuildEffectInstignator = nullptr;
 	mActiveBuildEffect = nullptr;
@@ -1885,7 +1872,9 @@ void AFGBuildable::OnBuildEffectFinished()
 	FlushNetDormancy();
 }
 
-bool AFGBuildable::HandleBlueprintSpawnedBuildEffect( AFGBuildEffectActor* inBuildEffectActor )
+void AFGBuildable::SetBlueprintBuildEffectID(int32 buildEffectID){ }
+
+void AFGBuildable::SetPlayingBuildEffectActor(AFGBuildEffectActor* buildEffectActor)
 {
 	if( !ManagedByLightweightBuildableSubsystem() || mReplicatedBuiltInsideBlueprintDesigner )
 	{
@@ -1894,22 +1883,19 @@ bool AFGBuildable::HandleBlueprintSpawnedBuildEffect( AFGBuildEffectActor* inBui
 		{
 			CallSetupInstances();
 			RegisterWithBackgroundThread();
-		
-			return false;
 		}
 
 		CallSetupInstances(true );
 	}
 
 
-	inBuildEffectActor->SetActor( this );
-	mBuildEffectActor = inBuildEffectActor;
-	mBlueprintBuildEffectIsPlaying = true;
+	buildEffectActor->AddActorToBuildEffect( this );
+	mBuildEffectActor = buildEffectActor;
 	mBuildEffectIsPlaying = true;
 	
 	if ( mBuiltWithRecipe )
 	{
-		inBuildEffectActor->SetRecipe(*mBuiltWithRecipe, this );
+		buildEffectActor->AddBuildEffectCostFromRecipe(*mBuiltWithRecipe, this );
 	}
 #if WITH_EDITOR
 	else
@@ -1919,23 +1905,10 @@ bool AFGBuildable::HandleBlueprintSpawnedBuildEffect( AFGBuildEffectActor* inBui
 #endif
 
 	// there are specific binds for certain classes, we call a different on finished for spline buildables for example.
-	inBuildEffectActor->GetBind( GetClass() ).AddDynamic( this, &AFGBuildable::OnBuildEffectActorFinished );
-	
-	return true;
+	buildEffectActor->GetBind( GetClass() ).AddDynamic( this, &AFGBuildable::OnBuildEffectFinished );
 }
 
-void AFGBuildable::PlayBuildEffectActor( AActor* inInstigator )
-{
-	// Don't play effects on hidden integrated buildables. i.e. hub upgrades.
-	if( !GetRootComponent()->IsVisible() )
-	{
-		return;
-	}
-
-	mBuildEffectInstignator = inInstigator;
-}
-
-void AFGBuildable::ExecutePlayBuildActorEffects()
+void AFGBuildable::PlayBuildEffect()
 {
 	if( ShouldSkipBuildEffect() )
 	{
@@ -1961,18 +1934,21 @@ void AFGBuildable::ExecutePlayBuildActorEffects()
 	
 	CallSetupInstances(true );
 
+	// MODDING EDIT: Not sure what should happen here after the refactor
+	/*
 	const auto SparseData = GetBuildableSparseData();
 	TSubclassOf<AFGBuildEffectActor> BuildEffectTemplate = SparseData ? SparseData->mSparseBuildEffectActorTemplate : nullptr;
 
 	// Request build effect actor.
 	AFGBuildEffectActor* BuildEffectActor = nullptr;
 	AFGBuildableSubsystem::RequestBuildEffectActor( this, BuildEffectActor, BuildEffectTemplate, GetActorTransform(), mBuildEffectInstignator, bForceBuildEffectSolo );
-	BuildEffectActor->SetActor( this );
-	BuildEffectActor->SetRecipe( *mBuiltWithRecipe, this );
-	BuildEffectActor->GetBind(GetClass()).AddDynamic(this, &AFGBuildable::OnBuildEffectActorFinished);
+	BuildEffectActor->AddActorToBuildEffect( this );
+	BuildEffectActor->AddBuildEffectCostFromRecipe( *mBuiltWithRecipe, this );
+	BuildEffectActor->GetBind(GetClass()).AddDynamic(this, &AFGBuildable::OnBuildEffectFinished);
 	mBuildEffectIsPlaying = true;
 	mBuildEffectActor = BuildEffectActor;
 	// Start is auto called next frame.
+	*/
 	
 	for (auto comp : TInlineComponentArray<UFGColoredInstanceMeshProxy*>{this})
 	{
@@ -1982,9 +1958,9 @@ void AFGBuildable::ExecutePlayBuildActorEffects()
 	SetActorHiddenInGame( true );
 }
 
-void AFGBuildable::OnBuildEffectActorFinished()
+void AFGBuildable::OnBuildEffectFinished()
 {
-	if( ShouldConvertToLightweight() && mBlueprintBuildEffectIsPlaying )
+	if( ShouldConvertToLightweight() )
 	{
 		bool successfullyAdded = HandleLightweightAddition();
 		if( successfullyAdded )
@@ -2036,7 +2012,7 @@ void AFGBuildable::NetMulticast_Dismantle_Implementation()
 	}
 
 	TurnOffAndDestroy();
-	PlayDismantleEffects();
+	PlayDismantleEffect();
 }
 
 void AFGBuildable::CloseAllInteractUIsWithBuildable() const
@@ -2058,7 +2034,7 @@ void AFGBuildable::CloseAllInteractUIsWithBuildable() const
 	}
 }
 
-void AFGBuildable::PlayDismantleEffects()
+void AFGBuildable::PlayDismantleEffect()
 {
 	const TSoftClassPtr< UFGMaterialEffect_Build > dismantleEffectTemplate = GetDismantleEffectTemplate();
 	if( !dismantleEffectTemplate.IsNull() )
@@ -2128,10 +2104,7 @@ void AFGBuildable::OnDismantleEffectFinished()
 	Destroy();
 }
 
-UFGMaterialEffect_Build* AFGBuildable::GetActiveBuildEffect()
-{
-	return mActiveBuildEffect;
-}
+bool AFGBuildable::TrySetupClearanceData(){ return false; }
 
 void AFGBuildable::OnSkinCustomizationApplied_Implementation( TSubclassOf< class UFGFactoryCustomizationDescriptor_Skin > skin )
 {

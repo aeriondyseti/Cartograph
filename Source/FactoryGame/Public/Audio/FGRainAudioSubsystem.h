@@ -43,7 +43,6 @@ public:
 	
 protected:
 	// Called when the game starts or when spawned
-	virtual void BeginPlay() override;
 	virtual void EndPlay( const EEndPlayReason::Type EndPlayReason ) override;
 
 	void TickRainBuildingSpots();
@@ -127,6 +126,13 @@ public:
 	UPROPERTY( EditDefaultsOnly, Category = "Audio Rain | Common" )
 	TObjectPtr< class UAkStateValue > mDefaultMaterialTypeState = nullptr;
 
+	//Rain bed start sounds. Those are not soft since its just a streaming triggers, and its more reliable to store them like this without introducing additional complexity
+	UPROPERTY( EditDefaultsOnly, Category = "Audio Rain | Common" )
+	TObjectPtr< class UAkAudioEvent > mRainBedStartSound = nullptr;
+	
+    UPROPERTY( EditDefaultsOnly, Category = "Audio Rain | Common" )
+    TObjectPtr< class UAkAudioEvent > mRainBedStopSound = nullptr;
+	
 protected:
 	// Material type
 	TWeakObjectPtr< UPhysicalMaterial > MostHitMaterial;

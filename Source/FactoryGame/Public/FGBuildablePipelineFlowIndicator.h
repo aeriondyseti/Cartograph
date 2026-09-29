@@ -89,4 +89,11 @@ private:
 	bool mIsServerSideSignificant{false};
 	/** True if we are significant for the local player. That means we need to tick the visuals on the flow indicator */
 	bool mIsLocallySignificant{false};
+
+	/** World time our replicated flow/content data last actually changed, used to decide when it's safe to go back to sleep */
+	double mLastDataChangeTime{ -BIG_NUMBER };
+
+	// How long our data must stay unchanged before we're allowed to go back to DORM_DormantAll.
+	// 2 seconds matches the average time constant FPipelineIndicatorData::CalculateSmoothFlowRateAndContentPct
+	static constexpr float DORMANCY_SETTLE_TIME_SECONDS = 2.0f;
 };

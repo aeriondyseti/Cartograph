@@ -28,7 +28,7 @@ struct FFoliageReplicationBundle
 	TArray<FVector> RemovedLocations;
 
 	UPROPERTY()
-	FIntVector FoliageCell;
+	FIntVector FoliageCell = {};
 };
 
 FArchive& operator<<(FArchive& Ar, FFoliageReplicationBundle& Bundle);

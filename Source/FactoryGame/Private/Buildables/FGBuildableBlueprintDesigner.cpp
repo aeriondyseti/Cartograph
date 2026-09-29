@@ -72,7 +72,7 @@ void AFGBuildableBlueprintDesigner::GetOffsetTransform(FTransform& out_transform
 UFGInventoryComponent* AFGBuildableBlueprintDesigner::GetInteractingPlayerInventory(){ return nullptr; }
 bool AFGBuildableBlueprintDesigner::CanAffordToLoad(UFGBlueprintDescriptor* blueprintDesc, UFGInventoryComponent* playerInv){ return bool(); }
 void AFGBuildableBlueprintDesigner::RemoveCostToLoad(UFGBlueprintDescriptor* blueprintDescriptor, AFGCharacterPlayer* character){ }
-void AFGBuildableBlueprintDesigner::OnBuildEffectFinished(){ }
+void AFGBuildableBlueprintDesigner::OnLegacyBuildEffectFinished(){ }
 void AFGBuildableBlueprintDesigner::OnRep_Storage(){ }
 void AFGBuildableBlueprintDesigner::OnBuildingsChanged(){ }
 void AFGBuildableBlueprintDesigner::RecalculateBlueprintCost(){ }

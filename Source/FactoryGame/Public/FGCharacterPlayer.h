@@ -992,6 +992,8 @@ public:
 	void Input_Sprint( const FInputActionValue& actionValue );
 
 	void Input_Crouch( const FInputActionValue& actionValue );
+	void Input_ToggleCrouch( const FInputActionValue& actionValue );
+
 
 	void Input_CycleNextEquipment(const FInputActionInstance& ActionInstance);
 	void Input_CycleEquipmentAxis(const FInputActionValue& actionValue);

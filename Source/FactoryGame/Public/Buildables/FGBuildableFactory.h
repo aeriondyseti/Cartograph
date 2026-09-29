@@ -68,8 +68,8 @@ public:
 	// End Factory_ interface
 	
 	// Begin FGBuildable
+	virtual void OnLegacyBuildEffectFinished() override;
 	virtual void OnBuildEffectFinished() override;
-	virtual void OnBuildEffectActorFinished() override;
 	virtual void Dismantle_Implementation() override;
 	// End FGBuildable
 

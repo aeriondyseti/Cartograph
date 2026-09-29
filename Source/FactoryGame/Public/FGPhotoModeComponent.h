@@ -196,6 +196,9 @@ protected:
 
 	UFUNCTION( Server, Reliable )
 	void Server_TogglePhotoMode( const bool isOn );
+
+	UFUNCTION( Server, Reliable )
+	void Server_ExitPhotoMode();
 	
 	AFGCharacterPlayer* GetOwnerPlayerCharacter() const;
 	AFGPlayerController* GetPlayerController() const;
@@ -260,6 +263,9 @@ public:
 	TObjectPtr<class USpringArmComponent> mSpringArmComp;
 
 	void HandleDecoupledCameraMoveSpeed();
+
+	virtual void OnMovementModeChanged( EMovementMode PrevMovementMode, uint8 PreviousCustomMode = 0 ) override;
+
 
 	UFUNCTION( Server, Reliable )
 	void Server_SetMoveSpeed( const float newSpeed );

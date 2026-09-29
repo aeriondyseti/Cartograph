@@ -29,7 +29,7 @@ void AFGBuildablePowerPole::ShowConnectionFeedback( UFGCircuitConnectionComponen
 void AFGBuildablePowerPole::HideConnectionFeedback(){ }
 void AFGBuildablePowerPole::Dismantle_Implementation(){ }
 bool AFGBuildablePowerPole::ShouldBeConsideredForBase_Implementation(){ return bool(); }
-void AFGBuildablePowerPole::OnBuildEffectFinished(){ }
+void AFGBuildablePowerPole::OnLegacyBuildEffectFinished(){ }
 UFGPowerCircuit* AFGBuildablePowerPole::GetPowerCircuit() const{ return nullptr; }
 void AFGBuildablePowerPole::OnPowerConnectionChanged( UFGCircuitConnectionComponent* connection){ }
 void AFGBuildablePowerPole::MarkConnectionsDirty(){ }

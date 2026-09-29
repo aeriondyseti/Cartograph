@@ -72,6 +72,7 @@ void AFGPipelineHologram::ConfigureActor( AFGBuildable* inBuildable) const{ }
 void AFGPipelineHologram::ConfigureComponents( AFGBuildable* inBuildable) const{ }
 void AFGPipelineHologram::CheckValidFloor(){ }
 void AFGPipelineHologram::CheckValidPlacement(){ }
+void AFGPipelineHologram::ApplyCustomizationData(){ Super::ApplyCustomizationData(); }
 void AFGPipelineHologram::ValidatePipeline(){ }
 void AFGPipelineHologram::OnRep_SplineData(){ }
 void AFGPipelineHologram::GenerateAndUpdateSpline(const FHitResult& hitResult){  }

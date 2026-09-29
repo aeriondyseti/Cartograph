@@ -234,7 +234,8 @@ struct FACTORYGAME_API FSplineUtils
 		float startRadius,
 		float endRadius,
 		const FVector& endPos,
-		const FVector& endForward );
+		const FVector& endForward,
+		bool bOrthogonalLock = false );
 
 	static bool Build90DegreeSpline2D(
 		struct FSplineBuilder& builder,

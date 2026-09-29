@@ -67,6 +67,7 @@ void AFGBuildableHologram::SetCustomizationData(const struct FFactoryCustomizati
 bool AFGBuildableHologram::IsInZoopBuildMode() const{ return bool(); }
 void AFGBuildableHologram::SetMaxZoopAmount(int32 amount){ }
 void AFGBuildableHologram::SetZoopAmount(const FIntVector& Zoop){ }
+void AFGBuildableHologram::SetSnapToGuideLines(bool isEnabled){ Super::SetSnapToGuideLines(isEnabled); }
 void AFGBuildableHologram::SetZoopFromHitresult(const FHitResult& hitResult){ }
 void AFGBuildableHologram::CreateZoopInstances(const FIntVector& DesiredZoop){ }
 FVector AFGBuildableHologram::ConvertZoopToWorldLocation(const FIntVector& zoop) const{ return FVector(); }

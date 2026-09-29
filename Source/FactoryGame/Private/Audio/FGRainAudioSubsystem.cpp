@@ -36,7 +36,6 @@ AFGRainAudioSubsystem::AFGRainAudioSubsystem(): Super() {
 }
 AFGRainAudioSubsystem* AFGRainAudioSubsystem::Get(class UWorld* world){ return nullptr; }
 AFGRainAudioSubsystem* AFGRainAudioSubsystem::Get(UObject* worldContext){ return nullptr; }
-void AFGRainAudioSubsystem::BeginPlay(){ Super::BeginPlay(); }
 void AFGRainAudioSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReason){ Super::EndPlay(EndPlayReason); }
 void AFGRainAudioSubsystem::TickRainBuildingSpots(){ }
 void AFGRainAudioSubsystem::TickRainFoliageSpots(){ }

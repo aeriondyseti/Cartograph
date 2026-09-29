@@ -93,6 +93,7 @@ protected:
 	// <FL> [TranN] Handle disconnect
 	void OnBackendConnectionStatusChanged( UOnlineIntegrationBackend* backend, EOnlineBackendConnectionStatus status );
 	void SendLocalPlayerToMainMenuAndShowError();
+	void SendLocalPlayerToMainMenuOnForeground();
 	// </FL>
 
 	/** Get the presence string we should show to other users */

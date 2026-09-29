@@ -26,7 +26,7 @@ AFGBuildableElevator::AFGBuildableElevator() : Super() {
 }
 void AFGBuildableElevator::PostLoadGame_Implementation(int32 saveVersion, int32 gameVersion){ Super::PostLoadGame_Implementation(saveVersion, gameVersion); }
 void AFGBuildableElevator::BeginPlay(){ Super::BeginPlay(); }
-void AFGBuildableElevator::EndPlay(const EEndPlayReason::Type EndPlayReason){ Super::EndPlay(EndPlayReason); }
+void AFGBuildableElevator::Destroyed(){ Super::Destroyed(); }
 void AFGBuildableElevator::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AFGBuildableElevator, mElevatorCabin);
@@ -40,7 +40,8 @@ void AFGBuildableElevator::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 }
 int32 AFGBuildableElevator::GetDismantleRefundReturnsMultiplier() const{ return Super::GetDismantleRefundReturnsMultiplier(); }
 void AFGBuildableElevator::OnBuildEffectFinished(){ Super::OnBuildEffectFinished(); }
-void AFGBuildableElevator::OnBuildEffectActorFinished(){ Super::OnBuildEffectActorFinished(); }
+void AFGBuildableElevator::PostSerializedFromBlueprint(bool isBlueprintWorld){ Super::PostSerializedFromBlueprint(isBlueprintWorld); }
+void AFGBuildableElevator::OnLegacyBuildEffectFinished(){ Super::OnLegacyBuildEffectFinished(); }
 void AFGBuildableElevator::GetDismantleDisqualifiers_Implementation(TArray<TSubclassOf<UFGConstructDisqualifier>>& out_dismantleDisqualifiers, const TArray<AActor*>& allSelectedActors) const{ Super::GetDismantleDisqualifiers_Implementation(out_dismantleDisqualifiers, allSelectedActors); }
 void AFGBuildableElevator::GetChildDismantleActors_Implementation(TArray<AActor*>& out_ChildDismantleActors) const{ Super::GetChildDismantleActors_Implementation(out_ChildDismantleActors); }
 bool AFGBuildableElevator::CanDismantle_Implementation() const{ return Super::CanDismantle_Implementation(); }
@@ -88,6 +89,7 @@ bool AFGBuildableElevator::IsPointInElevatorCabin(const FVector& location) const
 void AFGBuildableElevator::BeginMoveToFloorStop(const FElevatorFloorStopInfo& floorInfo){ }
 void AFGBuildableElevator::DebugLogQueuedArray(){ }
 void AFGBuildableElevator::SetElevatorState(EElevatorState newState){ }
+bool AFGBuildableElevator::TrySetupClearanceData(){ return Super::TrySetupClearanceData(); }
 #if WITH_EDITOR
 void AFGBuildableElevator::PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent){ Super::PostEditChangeChainProperty(PropertyChangedEvent); }
 #endif

@@ -11,6 +11,7 @@
 #include "Math/GenericOctree.h"
 #include "FGBuildableSubsystem.generated.h"
 
+struct FRuntimeBuildableInstanceData;
 class AFGProjectAssembly;
 class UFGProductionIndicatorInstanceManager;
 class AFGBuildEffectActor;
@@ -176,6 +177,44 @@ struct FBuildableComponentsOctree : public TOctree2<AFGBuildable*, FBuildableOct
 	FBuildableComponentsOctree(const FVector& InOrigin,FVector::FReal InExtent) : TOctree2(InOrigin, InExtent) {};
 
 	TMap<const AFGBuildable*, FOctreeElementId2> mElementIdMap;
+};
+
+/** Reference to a lightweight by buildable class and Lightweight ID */
+USTRUCT()
+struct FLightweightBuildEffectData
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TSubclassOf<AFGBuildable> BuildableClass;
+
+	int32 RuntimeDataIndex{INDEX_NONE};
+
+	FTransform Transform;
+};
+
+/** Data about a pending blueprint build effect */
+USTRUCT()
+struct FBlueprintBuildEffectData
+{
+	GENERATED_BODY()
+
+	int32 BuildEffectID{INDEX_NONE};
+	FTransform OriginTransform;
+	int32 ExpectedNumBuildingsAndLightweights{INDEX_NONE};
+	float CreationWorldTime{0.0f};
+	bool bCleanupRequested{false};
+
+	UPROPERTY()
+	TArray<TObjectPtr<AFGBuildable>> Buildings;
+
+	UPROPERTY()
+	TArray<FLightweightBuildEffectData> Lightweights;
+
+	int32 SkippedObjectsNum{0};
+
+	UPROPERTY()
+	TObjectPtr<APawn> Instigator;
 };
 
 UINTERFACE(MinimalAPI, meta = (CannotImplementInterfaceInBlueprint))
@@ -559,15 +598,28 @@ public:
 	UFUNCTION(BlueprintPure,Category = "BuildableSubsystem|Proximity")
 	float GetDistanceConsideredClose() const { return mDistanceConsideredClose; }
 
-	
+	/** Associates the buildable actor with the blueprint build effect with the given ID */
+	void RegisterBuildableWithBlueprintBuildEffect( int32 blueprintBuildEffectID, AFGBuildable* buildable );
+	/** Associates the lightweight with the blueprint build effect with the given ID */
+	void RegisterLightweightWithBlueprintBuildEffect( int32 blueprintBuildEffectID, const TSubclassOf<AFGBuildable>& buildableClass, int32 runtimeIndex, const FTransform& buildableTransform );
+	/** Notifies the buildable subsystem that blueprint build effect should be skipped for the given buildable entirely */
+	void NotifyBuildableSkippedBlueprintBuildEffect( int32 blueprintBuildEffectID, const AFGBuildable* buildable );
+
+	/** Will be called from RPC to update the pending blueprint build effect entry with the expected number of objects */
+	void Local_SetPendingBlueprintBuildEffectServerData( int32 blueprintBuildEffectID, const FTransform& originTransform, int32 expectedNumObjects, APawn* buildEffectInstigator );
+	/** Will be called from RPC to forcefully clean up a pending build effect entry by ID */
+	void Local_ForceCleanupPendingBlueprintBuildEffect( int32 blueprintBuildEffectID );
+
 	/** Default number of slots used for overclocking shards. This is the default for all buildables that do not have an override. */
-	UPROPERTY( EditDefaultsOnly, Category = "Productivity", meta = (EditCondition = "mOverridePotentialShardSlots", EditConditionHides) )
+	UPROPERTY( EditDefaultsOnly, Category = "Productivity" )
 	int32 mDefaultPotentialShardSlots;
 	
 	/** Default slot size for the production boost power shards. This is the default for all buildables that do not have an override. */
-	UPROPERTY( EditDefaultsOnly, Category = "Productivity", meta = (EditCondition = "mOverrideProductionShardSlotSize", EditConditionHides) )
+	UPROPERTY( EditDefaultsOnly, Category = "Productivity" )
 	int32 mDefaultProductionShardSlotSize;
 private:
+	FBlueprintBuildEffectData& FindOrAllocateBlueprintBuildEffect( int32 blueprintBuildEffectID, const FTransform& transform );
+	void ProcessPendingBlueprintBuildEffects();
 
 	/** last used net construction ID. Used to identify pending constructions over network. Will increase ID every constructed building. */
 	FNetConstructionID mLastServerNetConstructionID;
@@ -731,8 +783,6 @@ private:
 	UPROPERTY()
 	TMap< int32, TObjectPtr<UMaterialInstanceDynamic> > mConveyorTrackSpeedToMaterial;
 
-	bool IsBasedOn( const UMaterialInterface* instance, const UMaterial* base );
-
 	//@todorefactor With meta = ( ShowOnlyInnerProperties ) it does not show and PrimaryActorTick seems to be all custom properties, so I moved to another category but could not expand.
 	/** Controls if we should receive Factory_Tick and how frequent. */
 	UPROPERTY( EditDefaultsOnly, Category = "Factory Tick", meta = ( NoAutoJson = true ) )
@@ -776,6 +826,10 @@ private:
 	UPROPERTY( VisibleInstanceOnly, Transient, Category = "Timelapse" )
 	TArray<FFGBuildableTimelapseBucket> mActiveTimelapseBuckets;
 #endif
+
+	/** Build effects that we are waiting to play once all buildings involved are replicated */
+	UPROPERTY()
+	TArray<FBlueprintBuildEffectData> mPendingBlueprintBuildEffects;
 
 	/** Currently registered factory tick handlers */
 	UPROPERTY(Transient)

@@ -143,7 +143,7 @@ public:
 	/** A blueprint was loaded, remove the items from the inventories. Should only be done if we already determined it was able to be afforded */
 	void RemoveCostToLoad( UFGBlueprintDescriptor* blueprintDescriptor, AFGCharacterPlayer* character );
 	
-	virtual void OnBuildEffectFinished() override;
+	virtual void OnLegacyBuildEffectFinished() override;
 
 	UFGInventoryComponent* GetStorageInventory() { return mStorage->GetStorageInventory(); }
 

@@ -42,7 +42,7 @@ void AFGBuildablePipelinePump::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void AFGBuildablePipelinePump::Tick(float dt){ Super::Tick(dt); }
 void AFGBuildablePipelinePump::Factory_Tick(float dt){ }
 bool AFGBuildablePipelinePump::CanProduce_Implementation() const{ return bool(); }
-void AFGBuildablePipelinePump::OnBuildEffectFinished(){ }
+void AFGBuildablePipelinePump::OnLegacyBuildEffectFinished(){ }
 EProductionStatus AFGBuildablePipelinePump::GetProductionIndicatorStatus() const{ return EProductionStatus(); }
 void AFGBuildablePipelinePump::OnFluidDescriptorSet(){ }
 void AFGBuildablePipelinePump::StopIsLookedAtForDismantle_Implementation( AFGCharacterPlayer* byCharacter){ }

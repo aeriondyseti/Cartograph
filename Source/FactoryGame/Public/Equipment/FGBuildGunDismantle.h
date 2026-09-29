@@ -261,7 +261,7 @@ private:
 	
 	/** Cached dismantle refunds on server that is replicated. This value does not include local lightweight refunds */
 	UPROPERTY(Transient, ReplicatedUsing = OnRep_PeekDismantleRefund )
-	FDismantleRefunds mPeekDismantleRefund;
+	FDismantleRefunds mPeekDismantleRefundNetworked;
 
 	/** Cached Refund from lightweight buildables. This is calculated locally */
 	UPROPERTY(Transient)

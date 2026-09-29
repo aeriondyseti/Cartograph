@@ -69,7 +69,7 @@ void UAudioGeometryInstanceManager::ProcessTick( const FVector& PlayerLocation )
 
 	auto AudioGeometryUpdateTaskWT = [this, PlayerLocation]()
 	{
-		FindAddsRemovesWT( PlayerLocation );
+		FindAddsRemovesWT( PlayerLocation, 0.0 );
 		//now broacast result to game thread
 		AsyncTask( ENamedThreads::GameThread, [this]()
 		{
@@ -87,7 +87,7 @@ void UAudioGeometryInstanceManager::ProcessTick( const FVector& PlayerLocation )
 #endif
 }
 
-void UAudioGeometryInstanceManager::FindAddsRemovesWT( const FVector& PlayerLocation )
+void UAudioGeometryInstanceManager::FindAddsRemovesWT( const FVector& PlayerLocation, const double CurrentTime )
 {
 	QUICK_SCOPE_CYCLE_COUNTER( STAT_AudioGeometryUpdateTask_WorkerThread );
 	

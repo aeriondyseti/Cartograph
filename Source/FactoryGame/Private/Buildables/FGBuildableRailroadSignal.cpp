@@ -35,7 +35,7 @@ void AFGBuildableRailroadSignal::BeginPlay(){ Super::BeginPlay(); }
 void AFGBuildableRailroadSignal::EndPlay(const EEndPlayReason::Type endPlayReason){ Super::EndPlay(endPlayReason); }
 void AFGBuildableRailroadSignal::Destroyed(){ Super::Destroyed(); }
 void AFGBuildableRailroadSignal::OnBuildEffectFinished(){ }
-void AFGBuildableRailroadSignal::OnBuildEffectActorFinished(){ }
+void AFGBuildableRailroadSignal::OnLegacyBuildEffectFinished(){ }
 void AFGBuildableRailroadSignal::PostLoadGame_Implementation(int32 saveVersion, int32 gameVersion){ }
 void AFGBuildableRailroadSignal::GainedSignificance_Implementation(){ }
 void AFGBuildableRailroadSignal::LostSignificance_Implementation(){ }

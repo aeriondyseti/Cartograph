@@ -93,8 +93,8 @@ public:
 	bool PasteSettings_Implementation( UFGFactoryClipboardSettings* settings, class AFGPlayerController* player ) override;
 	//~ End IFGFactoryClipboardInterface
 
+	virtual void OnLegacyBuildEffectFinished() override;
 	virtual void OnBuildEffectFinished() override;
-	virtual void OnBuildEffectActorFinished() override;
 	
 	// When a text element is updated, this call will update that element and set the save data
 	UFUNCTION( BlueprintCallable, Category = "WidgetSign" )

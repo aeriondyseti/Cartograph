@@ -33,7 +33,7 @@ bool AFGBuildableLightSource::GetPoolHandleInitialState() const{ return bool(); 
 UFGFactoryClipboardSettings* AFGBuildableLightSource::CopySettings_Implementation(){ return nullptr; }
 bool AFGBuildableLightSource::PasteSettings_Implementation(UFGFactoryClipboardSettings* factoryClipboard, class AFGPlayerController* player){ return bool(); }
 TSubclassOf<UObject> AFGBuildableLightSource::GetClipboardMappingClass_Implementation(){ return TSubclassOf<UObject>(); }
-void AFGBuildableLightSource::OnBuildEffectFinished(){ }
+void AFGBuildableLightSource::OnLegacyBuildEffectFinished(){ }
 void AFGBuildableLightSource::SetLightEnabled(bool isEnabled){ }
 void AFGBuildableLightSource::SetLightControlData(FLightSourceControlData data){ }
 bool AFGBuildableLightSource::IsLightEnabled() const{ return bool(); }

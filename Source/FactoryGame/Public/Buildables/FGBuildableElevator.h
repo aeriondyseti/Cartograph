@@ -29,14 +29,15 @@ public:
 
 	// Begin AActor Interface
 	virtual void BeginPlay() override;
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void Destroyed() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	// End AActor Interface
 
 	// Begin AFGBuildable Interface
 	virtual int32 GetDismantleRefundReturnsMultiplier() const override;
+	virtual void OnLegacyBuildEffectFinished() override;
 	virtual void OnBuildEffectFinished() override;
-	virtual void OnBuildEffectActorFinished() override;
+	virtual void PostSerializedFromBlueprint( bool isBlueprintWorld = false );
 	// End AFGBuildable Interface
 
 	// Begin IFGDistmantleInterface
@@ -326,6 +327,10 @@ private:
 	void RemoveOccupyingCharacter( AFGCharacterPlayer* character ) { mOccupyingCharacters.Remove( character ); }
 	
 protected:
+	
+	// Begin AFGBuildable Interface
+	virtual bool TrySetupClearanceData() override;
+	// End AFGBuildable Interface
 	
 #if WITH_EDITOR
 	virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent) override;

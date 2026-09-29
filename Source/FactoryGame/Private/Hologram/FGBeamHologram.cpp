@@ -6,7 +6,6 @@
 AFGBeamHologram::AFGBeamHologram() : Super() {
 	this->mBuildModeDiagonal = nullptr;
 	this->mBuildModeFreeForm = nullptr;
-	this->mCostMultiplier = 1.0;
 	this->mBeamMesh = nullptr;
 	this->mCurrentLength = 0.0;
 	this->mBuildStep = EBeamHologramBuildStep::BHBS_Placement;

@@ -133,6 +133,7 @@ void AFGWheeledVehicle::Server_ReplicateClientMovement_Implementation(FVector au
 void AFGWheeledVehicle::Server_SetPathVisualizationEnabled_Implementation(bool newPathVisualizationEnabled){ }
 void AFGWheeledVehicle::OnRepTrunkUser(){ }
 void AFGWheeledVehicle::OnRep_VehicleCombinedLightsState(){ }
+void AFGWheeledVehicle::OnRep_VehicleInProxyMode(){ }
 void AFGWheeledVehicle::BurnFuel(const float dt){ }
 bool AFGWheeledVehicle::CanApplyVehicleInput() const{ return bool(); }
 bool AFGWheeledVehicle::ShouldApplyHandbrake() const{ return bool(); }

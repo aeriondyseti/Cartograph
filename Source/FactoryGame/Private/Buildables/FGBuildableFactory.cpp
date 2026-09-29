@@ -90,7 +90,7 @@ void AFGBuildableFactory::GetConditionalReplicatedProps(TArray<FFGCondReplicated
 bool AFGBuildableFactory::IsPropertyRelevantForConnection(UNetConnection* netConnection, const FProperty* property) const{ return bool(); }
 void AFGBuildableFactory::Factory_Tick(float dt){ }
 void AFGBuildableFactory::OnBuildEffectFinished(){ }
-void AFGBuildableFactory::OnBuildEffectActorFinished(){ }
+void AFGBuildableFactory::OnLegacyBuildEffectFinished(){ }
 void AFGBuildableFactory::Dismantle_Implementation(){ }
 TArray< UFGFactoryConnectionComponent* > AFGBuildableFactory::GetConnectionComponents() const{ return TArray<UFGFactoryConnectionComponent*>(); }
 float AFGBuildableFactory::GetEmissivePower(){ return float(); }

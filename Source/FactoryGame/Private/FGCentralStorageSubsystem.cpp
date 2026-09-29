@@ -31,5 +31,6 @@ void AFGCentralStorageSubsystem::UpdateItemStackLimit(){ }
 void AFGCentralStorageSubsystem::SortItemsInStorage(){ }
 void AFGCentralStorageSubsystem::OnRep_StorageUpdated() const{ }
 void AFGCentralStorageSubsystem::Client_NewItemAddedToCentralStorage_Implementation(TSubclassOf<UFGItemDescriptor> inClass){ }
+void AFGCentralStorageSubsystem::Client_ItemAmountUpdatedInCentralStorage_Implementation(TSubclassOf<UFGItemDescriptor> itemClass, int32 newAmount){ }
 bool AFGCentralStorageSubsystem::IsInventoryItemValidForCentralStorage(const FInventoryItem& inventoryItem) const{ return bool(); }
 void AFGCentralStorageSubsystem::OnCentralStorageItemLimitReachedUpdated(TSubclassOf<  UFGItemDescriptor > itemDescriptor, bool itemLimitReached){ }

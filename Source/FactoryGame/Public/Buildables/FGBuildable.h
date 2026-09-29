@@ -26,6 +26,7 @@
 #include "GameplayTagContainer.h"
 #include "FGBuildable.generated.h"
 
+class UFGMaterialEffect_Build;
 // Begin forward declaration
 class UAkComponent;
 class AFGBuildEffectActor;
@@ -384,53 +385,30 @@ public:
 	void Stat_StockInventory( TArray< FItemAmount >& out_amount ) const;
 	// End FFactoryStatHelpers Functions
 
-	/**
-	 * Build/Dismantle Effects
-	 * @param instigator Actor who triggered the effect (i.e. where to throw the resources from).
-	 */
+	/** Sets the build effect instigator on the actor. This will result in actor playing build effect on BeginPlay. Must be called before BeginPlay */
 	UFUNCTION( BlueprintCallable, Category = "Buildable|Build Effect" )
-	virtual void PlayBuildEffects( AActor* inInstigator );
-	virtual void ExecutePlayBuildEffects();
-	virtual void OnBuildEffectFinished();
+	void SetBuildEffectInstigator( AActor* inInstigator );
 
-	/** Called when the build effect is finished to notify the blueprints */
-	UFUNCTION( BlueprintImplementableEvent, Category = "Buildable|Build Effect", DisplayName = "On Build Effect Finished" )
-	void K2_OnBuildEffectFinished();
-
-	UFUNCTION( BlueprintCallable, Category = "Buildable|Build Effect" )
-	virtual void PlayBuildEffectActor( AActor* inInstigator );
-
-	UFUNCTION()
-	virtual void ExecutePlayBuildActorEffects();
+	FORCEINLINE int32 GetBlueprintBuildEffectID() const { return mBlueprintBuildEffectID; }
+	/** Assign a blueprint build effect id. Blueprint build effect allows playing build effect for a group of buildings. Must be called before BeginPlay */
+	void SetBlueprintBuildEffectID( int32 buildEffectID );
 	
-	UFUNCTION()
-	virtual void OnBuildEffectActorFinished();
+	/** Immediately plays the build effect on this buildable */
+	virtual void PlayBuildEffect();
+	/** Will be called when build effect actor is assigned for this buildable. This is relevant for blueprint build effect where actual build effect actor might be spawned a while after BeginPlay of the buildable */
+	virtual void SetPlayingBuildEffectActor( AFGBuildEffectActor* buildEffectActor );
+	/** Plays the legacy (space elevator) build effect on the buildable */
+	virtual void PlayLegacyBuildEffect();
 
-	/*Handles logic for blueprint / zooping build effect behaviour, returns true when it should be a part of the multi
-	 * build effect actor, false when it shouldn't */
-	virtual bool HandleBlueprintSpawnedBuildEffect( AFGBuildEffectActor* inBuildEffectActor );
-
-	UFUNCTION( Reliable, NetMulticast )
-	virtual void NetMulticast_Dismantle();
 	void CloseAllInteractUIsWithBuildable() const;
-	void PlayDismantleEffects();
-	virtual void OnDismantleEffectFinished();
-
-	class UFGMaterialEffect_Build* GetActiveBuildEffect();
-
+	
 	/** Returns true if this buildable can be sampled */
 	UFUNCTION( BlueprintNativeEvent, Category = "Buildable" )
 	bool CanBeSampled() const;
 
-	/** Used by the blueprint subsystem to notify a buildable a build effect is playing (before the build effect starts so that begin play can expect it) */
-	void SetIsPlayingBuildEffect( bool isPlaying ) { mBuildEffectIsPlaying = isPlaying; }
-
-	/** Used by the blueprint subsystem that a Lightweight Buildable is playing a blueprint build effect*/
-	void SetIsPlayingBlueprintBuildEffect( bool isPlaying ) { mBlueprintBuildEffectIsPlaying = isPlaying; }
-
-	/** Returns whether or not the build effect is currently running */
+	/** Returns true whenever the build effect is currently playing */
 	UFUNCTION( BlueprintPure, Category = "Buildable|Build Effect" )
-	bool IsPlayingBuildEffect() const { return mBuildEffectIsPlaying; }
+	FORCEINLINE bool IsPlayingBuildEffect() const { return mBuildEffectIsPlaying; }
 	
 	/** Returns the cached bounds */
 	FORCEINLINE FBox GetCachedBounds() const { return mCachedBounds; }
@@ -579,14 +557,6 @@ public:
 	 * Called from blueprint subsystem after being loaded. Can be used to run custom logic post serialization
 	 */
 	virtual void PostSerializedFromBlueprint( bool isBlueprintWorld = false );
-	
-	/** Assign a blueprint build effect id. The blueprint subsystem uses this to sync and then spawn build effects for blueprint buildings on clients*/
-	void SetBlueprintBuildEffectID( int32 buildEffectID ) { mBlueprintBuildEffectID = buildEffectID; }
-	int32 GetBlueprintBuildEffectID() const { return mBlueprintBuildEffectID; }
-
-	/** @return the build effect used by this buildable */
-	UFUNCTION( BlueprintNativeEvent, Category = "Buildable|Build Effect" )
-	TSoftClassPtr< UFGMaterialEffect_Build > GetBuildEffectTemplate() const;
 
 	/** Set from deferred spawn for special buildables that are just temporaries spawned by the lightweightBuildableSubsystem */
 	void SetIsLightweightTemporary( TArray<FInstanceOwnerHandlePtr>& instanceHandles, int32 indexOfRuntimeData );
@@ -598,7 +568,6 @@ public:
 	/** Sets that this buildable has been requested for dismantle. Clients use this to track locally */
 	FORCEINLINE void SetIsPendingDismantleRemoval( bool isPending ) { mIsPendingDismantleRemoval = isPending; }
 	FORCEINLINE bool GetIsPendingDismantleRemoval() const { return mIsPendingDismantleRemoval; }
-	
 
 	/**
 	 * Set via the lightweight subsystem when its clearing up stale lightweight temps. This "informs" the buildable that its destruction is just
@@ -611,10 +580,6 @@ public:
 
 	FORCEINLINE void SetBlockCleanupOfTemporary(bool blockCleanUp ) { mBlockCleanupForStaleTemporary = blockCleanUp; }
 	FORCEINLINE bool GetBlockCleanupOfTemporary() const { return mBlockCleanupForStaleTemporary; }
-	
-	/** @return the dismantle effect used by this buildable */
-	UFUNCTION( BlueprintNativeEvent, Category = "Buildable|Build Effect" )
-	TSoftClassPtr< UFGMaterialEffect_Build > GetDismantleEffectTemplate() const;
 
 #if WITH_EDITOR
 	/** Returns the ID of the timelapse bucket this buildable is in */
@@ -643,8 +608,8 @@ public:
 	/** If true, this buildable will be Destroyed and migrated to the LightweightBuildableSubsystem */
 	virtual bool ManagedByLightweightBuildableSubsystem() const;
 
-	void SetBuildEffectActor(AFGBuildEffectActor* BuildEffectActor) { mBuildEffectActor = BuildEffectActor; }
-	AFGBuildEffectActor* GetBuildEffectActor() const { return mBuildEffectActor; }
+	/** Build effect actor associated with this buildable */
+	FORCEINLINE AFGBuildEffectActor* GetBuildEffectActor() const { return mBuildEffectActor; }
 	
 	/** Removes all lightweight instances currently owned by this buildable. Needs to be public to be accessible by lightweight buildable subsystem */
 	void Internal_CallRemoveInstances();
@@ -666,6 +631,33 @@ public:
 	/** True if default customization application logic should run on buildable and its hologram meshes */
 	FORCEINLINE bool ShouldApplyCustomizationData() const { return mShouldApplyCustomizationData; }
 protected:
+	/** Will be called once the build effect is finished */
+	UFUNCTION() virtual void OnBuildEffectFinished();
+	/** Will be called once the legacy build effect is finished */
+	virtual void OnLegacyBuildEffectFinished();
+	/** Called when the build effect is finished to notify the blueprints. Will be called by both legacy and normal build effect */
+	UFUNCTION( BlueprintImplementableEvent, Category = "Buildable|Build Effect", DisplayName = "On Build Effect Finished" )
+	void K2_OnBuildEffectFinished();
+
+	/** @return the build effect used by this buildable */
+	UFUNCTION( BlueprintNativeEvent, Category = "Buildable|Build Effect" )
+	TSoftClassPtr<UFGMaterialEffect_Build> GetBuildEffectTemplate() const;
+	/** @return the dismantle effect used by this buildable */
+	UFUNCTION( BlueprintNativeEvent, Category = "Buildable|Build Effect" )
+	TSoftClassPtr<UFGMaterialEffect_Build> GetDismantleEffectTemplate() const;
+
+	/** Will be called by Dismantle to broadcast dismantle to all clients */
+	UFUNCTION( Reliable, NetMulticast )
+	virtual void NetMulticast_Dismantle();
+	/** Immediately plays the dismantle effect on the buildable */
+	void PlayDismantleEffect();
+	/** Will be called once the dismantle effect finished playing */
+	virtual void OnDismantleEffectFinished();
+
+	/** Tries setupping Clearence data.
+	 * @return returns false if already has clearence data or no implementation */
+	virtual bool TrySetupClearanceData();
+	
 	/**
 	 * Called when it is time to update the cached bounds for this buildable.
 	 *
@@ -957,8 +949,8 @@ protected:
 	/** Flag for whether the build effect is active */
 	uint8 mBuildEffectIsPlaying : 1;
 
-	/** Flag specifically that this is a blueprint build effect */
-	uint8 mBlueprintBuildEffectIsPlaying : 1;
+	/** True if we are waiting for build effect actor (we are logically playing build effect, but do not have an actor for it yet - this is possible with blueprint build effect) */
+	uint8 mIsWaitingForBuildEffectActor: 1;
 
 	/** Flag for whether this buildable is being dismantled */
 	uint8 mIsDismantled : 1;

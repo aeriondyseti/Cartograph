@@ -67,14 +67,14 @@ public:
 	void RemoveAbstractDataEntry(  TSubclassOf< AFGBuildable > buildableClass, int32 index );
 	
 	// Add actor to the build effect.
-	FORCEINLINE void SetActor( AActor* InSourceActor )
+	FORCEINLINE void AddActorToBuildEffect( AActor* InSourceActor )
 	{
 		mSourceActors.Add(InSourceActor);
 		NumActors += 1;
 	}
 
 	// Add actor(s) to the build effect.
-	FORCEINLINE void SetActors( TArray<AActor*> InSourceActors )
+	FORCEINLINE void AddActorsToBuildEffect( TArray<AActor*> InSourceActors )
 	{
 		for (const auto actor : InSourceActors)
 		{
@@ -84,9 +84,9 @@ public:
 	}
 	
 	/** Set recipe used for spawning flying resources, NOTE buildable can be null. */
-	void SetRecipe( TSubclassOf<UFGRecipe> inRecipe, AFGBuildable* buildable );
+	void AddBuildEffectCostFromRecipe( TSubclassOf<UFGRecipe> inRecipe, AFGBuildable* buildable );
 	/** Sets the recipe used for spawning flying resources for a lightweight buildable. Provides access to type-specific data */
-	void SetRecipeFromLightweight( TSubclassOf<UFGRecipe> inRecipe, TSubclassOf<AFGBuildable> buildableClass, const struct FFGDynamicStruct& lightweightTypeSpecificData );
+	void AddBuildEffectCostForLightweight( TSubclassOf<UFGRecipe> inRecipe, TSubclassOf<AFGBuildable> buildableClass, const struct FFGDynamicStruct& lightweightTypeSpecificData );
 
 	// Force traditional way of building the effect force ignoring the zoop direction assumption logic.
 	void MarkAsBlueprintBuildEffect() { mIsBlueprint = true;}

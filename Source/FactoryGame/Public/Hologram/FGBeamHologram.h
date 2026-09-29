@@ -64,9 +64,6 @@ protected:
 	UPROPERTY( EditDefaultsOnly, Category = "Hologram|BuildMode" )
 	TSubclassOf< class UFGHologramBuildModeDescriptor > mBuildModeFreeForm;
 
-	UPROPERTY( EditDefaultsOnly, Category = "Beam" )
-	float mCostMultiplier;
-	
 private:
 	UPROPERTY()
 	TObjectPtr<UStaticMeshComponent> mBeamMesh;

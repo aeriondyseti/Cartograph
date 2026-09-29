@@ -88,7 +88,7 @@ public:
 	TSubclassOf<UObject> GetClipboardMappingClass_Implementation() override;
 	//~ End IFGFactoryClipboardInterface
 
-	virtual void OnBuildEffectFinished() override;
+	virtual void OnLegacyBuildEffectFinished() override;
 	
 	/** Turn this light on or off */
 	UFUNCTION( BlueprintCallable, BlueprintAuthorityOnly, Category = "FactoryGame|Buildable|Light" )

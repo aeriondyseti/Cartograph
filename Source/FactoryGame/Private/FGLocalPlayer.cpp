@@ -25,6 +25,7 @@ void UFGLocalPlayer::JoinPendingActivity(){  }
 void UFGLocalPlayer::OnLoginStatusChanged(ULocalUserInfo* userInfo, TSharedRef<UE::Online::FAccountInfo> accountInfo, UOnlineIntegrationBackend* backend){ }
 void UFGLocalPlayer::OnBackendConnectionStatusChanged(UOnlineIntegrationBackend* backend, EOnlineBackendConnectionStatus status){  }
 void UFGLocalPlayer::SendLocalPlayerToMainMenuAndShowError(){  }
+void UFGLocalPlayer::SendLocalPlayerToMainMenuOnForeground(){ }
 FString UFGLocalPlayer::GetPresenceString() const{ return FString(); }
 void UFGLocalPlayer::OnAboutToTravel(ULocalUserInfo* UserInfo, TMap<FString ,FString> &ExtraOptions){ }
 void UFGLocalPlayer::GetPresenceState(FPlayerPresenceState& outState) const{ }

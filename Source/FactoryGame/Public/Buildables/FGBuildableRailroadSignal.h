@@ -47,8 +47,8 @@ public:
 	// End Actor
 
 	// Begin FGBuildable
+	virtual void OnLegacyBuildEffectFinished() override;
 	virtual void OnBuildEffectFinished() override;
-	virtual void OnBuildEffectActorFinished() override;
 	virtual bool ShouldBeConsideredForBase_Implementation() override { return false; }
 	// End FGBuildable
 

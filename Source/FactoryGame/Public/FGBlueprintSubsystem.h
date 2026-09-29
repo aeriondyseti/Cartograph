@@ -56,58 +56,6 @@ struct FFileNameToRawFileData
 	TArray< uint8 > RawData;
 };
 
-USTRUCT()
-struct FLightweightBuildEffectData
-{
-	GENERATED_BODY()
-
-	FLightweightBuildEffectData() : RuntimeDataIndex( INDEX_NONE ), BuildableClass( nullptr )
-	{}
-	
-	FLightweightBuildEffectData( int32 runtimeDataIndex, TSubclassOf< AFGBuildable > buildableClass ) :
-			RuntimeDataIndex( runtimeDataIndex ),
-			BuildableClass( buildableClass )
-	{}
-	
-	UPROPERTY()
-	int32 RuntimeDataIndex;
-
-	UPROPERTY()
-	TSubclassOf< AFGBuildable > BuildableClass;
-};
-
-USTRUCT()
-struct FBlueprintBuildEffectData
-{
-	GENERATED_BODY()
-
-	FBlueprintBuildEffectData() : Transform( FTransform::Identity ), ID( INDEX_NONE ), NumBuildables( 0 )
-	{}
-
-	void AddLightweightData( int32 runtimeDataIndex, TSubclassOf< AFGBuildable > buildableClass )
-	{
-		LightweightData.Add( FLightweightBuildEffectData(runtimeDataIndex, buildableClass ) );
-	}
-	
-	UPROPERTY()
-	FTransform Transform;
-	
-	UPROPERTY()
-	int32 ID;
-
-	UPROPERTY()
-	int32 NumBuildables;
-
-	UPROPERTY( NotReplicated )
-	TArray< TObjectPtr<class AFGBuildable> > Buildables;
-
-	UPROPERTY( NotReplicated )
-	TArray< FLightweightBuildEffectData > LightweightData;
-
-	UPROPERTY()
-	TWeakObjectPtr< APawn > Instigator;
-};
-
 UCLASS()
 class FACTORYGAME_API UFGBlueprintRemoteCallObject : public UFGRemoteCallObject
 {
@@ -300,23 +248,8 @@ public:
 	 */
 	AFGBuildableBlueprintDesigner* IsLocationInsideABlueprintDesigner( const FVector& hitLocation );
 
-	/**
-	 *	When a buildable with a certain blueprint build effect ID begins play it notifies the subsystem
-	 *	so we can add that data and potentially start the build effect in Tick
-	 */
-	void NotifyBuildableWithBlueprintBuildIDSet( class AFGBuildable* buildable, int32 id );
-
-	/**
-	 *	When a lightweight is added with a certain blueprint build effect ID it notifies the subsystem
-	 *	so we can add that data and potentially start the build effect in Tick
-	 */
-	void NotifyRuntimeInstanceWithBlueprintBuildIDSet( int32 buildEffectId, int32 runtimeIndex, TSubclassOf< class AFGBuildable > buildableClass );
-
 	/** Called when the client receives the blueprint file from the server */
 	void ReceiveBlueprintFileDownload( const FBlueprintRecord& blueprintRecord, const TArray<uint8>& filePayload );
-
-	// Increment and return a valid blueprint buildeffect ID
-	int32 GetUniqueBlueprintBuildEffectID() { mBlueprintBuildEffectID++; return mBlueprintBuildEffectID; }
 	
 	UFUNCTION()
 	void OnRep_BlueprintCategoryRecords();
@@ -567,10 +500,6 @@ private:
 	UFUNCTION( NetMulticast, Reliable )
 	void Multicast_BroadcastBlueprintRecordChanges( const TArray< FBlueprintRecord >& records );
 
-	/** Notify Clients of build effect data */
-	UFUNCTION( NetMulticast, Reliable )
-	void Multicast_AddBlueprintBuildEffectData( const FBlueprintBuildEffectData& buildeffectData );
-
 	UFUNCTION( NetMulticast, Reliable )
 	void Multicast_DeleteBlueprintDescriptor( const FString& blueprintName );
 
@@ -724,17 +653,6 @@ private:
 	// List of all blueprints and their hash values on the server
 	UPROPERTY( ReplicatedUsing=OnRep_ServerManifest )
 	FBlueprintManifest mServerManifest;
-
-	// List Of Pending BuildEffects ( just waiting for building replication )
-	UPROPERTY()
-	TArray< FBlueprintBuildEffectData > mPendingBlueprintBuildEffects;
-
-	// Fail safe tracking for if a buildable replicates BEFORE the rpc notifying clients that there is a pending build effect 
-	UPROPERTY()
-	TArray< FBlueprintBuildEffectData > mTemporaryBuildEffectData;
-
-	UPROPERTY()
-	int32 mBlueprintBuildEffectID;
 
 	////////////////////////////////////
 	/// Server File Transfer tracking

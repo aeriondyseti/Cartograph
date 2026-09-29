@@ -184,6 +184,9 @@ protected:
 	void Input_SteerAxis( const FInputActionValue& actionValue );
 	
 	UFUNCTION()
+	void Input_SteerAxis_Completed( const FInputActionValue& actionValue );
+	
+	UFUNCTION()
 	void Input_Handbrake( const FInputActionValue& actionValue );
 
 	UFUNCTION()

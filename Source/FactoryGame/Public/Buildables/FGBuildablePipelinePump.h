@@ -49,7 +49,7 @@ public:
 	// Begin AFGBuildableFactory interface
 	virtual void Factory_Tick( float dt ) override;
 	virtual bool CanProduce_Implementation() const override;
-	virtual void OnBuildEffectFinished() override;
+	virtual void OnLegacyBuildEffectFinished() override;
 	virtual EProductionStatus GetProductionIndicatorStatus() const override;
 	// End AFGBuildableFactory interface
 

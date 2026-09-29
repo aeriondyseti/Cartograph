@@ -65,6 +65,7 @@ protected:
 	virtual void ConfigureComponents( class AFGBuildable* inBuildable ) const override;
 	virtual void CheckValidFloor() override;
 	virtual void CheckValidPlacement() override;
+	virtual void ApplyCustomizationData() override;
 	// End AFGBuildableHologram Interface
 
 	void ValidatePipeline();

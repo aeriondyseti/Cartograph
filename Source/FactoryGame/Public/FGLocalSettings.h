@@ -109,6 +109,10 @@ public:
 	UPROPERTY( EditAnywhere, config, Category = Game, meta = ( 
 		ToolTip = "If enabled we will autosave when playing in PIE" ) )
 	bool mEnableAutoSaveInPIE;
+
+	/** When checked, blueprints created in PIE will be saved under a single folder, regardless of session name. When disabled, normal game behavior occurs, e.g. blueprints are saved based on current session name */
+	UPROPERTY( EditAnywhere, config, Category = Game )
+	bool mEnableSharedBlueprintsInPIE{true};
 	
 	UPROPERTY( EditAnywhere, config, Category = Game, meta = ( ToolTip = "Enable this if you want the welcome pioneer logo to show when starting a game in editor" ) )
 	bool mShowFicsitSplashWidget;

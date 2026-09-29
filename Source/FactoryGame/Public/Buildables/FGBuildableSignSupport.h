@@ -19,9 +19,11 @@ public:
 	AFGBuildableSignSupport();
 	virtual void GetLifetimeReplicatedProps( TArray< FLifetimeProperty >& OutLifetimeProps ) const override;
 
+	virtual void PostLoadGame_Implementation(int32 saveVersion, int32 gameVersion) override;
+	
 	/** Sets an optional scale to scale the x/y values of the pole by */
 	virtual void SetPoleScale( const FVector2D& poleScale );
-	virtual void OnBuildEffectActorFinished() override;
+	virtual void OnBuildEffectFinished() override;
 
 	virtual bool CanBeSampled_Implementation() const override;
 

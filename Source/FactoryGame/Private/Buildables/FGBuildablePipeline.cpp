@@ -17,7 +17,6 @@ AFGBuildablePipeline::AFGBuildablePipeline() : Super() {
 	this->mSplineAudioEvent = nullptr;
 	this->mMaxIndicatorTurnAngle = 3.0;
 	this->mCachedFluidDescriptor = nullptr;
-	this->mCurrentFluid = TEXT("");
 	this->mLastContentForSound = 0.0;
 	this->mLastFlowForSound = 0.0;
 	this->mLastElapsedTime = 0.0;
@@ -54,6 +53,7 @@ void AFGBuildablePipeline::SetCustomizationData_Native(const FFactoryCustomizati
 void AFGBuildablePipeline::ApplyCustomizationData_Native(const FFactoryCustomizationData& customizationData){ }
 void AFGBuildablePipeline::StartIsAimedAtForColor_Implementation( AFGCharacterPlayer* byCharacter, bool isValid){ }
 void AFGBuildablePipeline::StopIsAimedAtForColor_Implementation( AFGCharacterPlayer* byCharacter){ }
+void AFGBuildablePipeline::PostLoadGame_Implementation(int32 saveVersion, int32 gameVersion){ Super::PostLoadGame_Implementation(saveVersion, gameVersion); }
 void AFGBuildablePipeline::GetChildDismantleActors_Implementation(TArray< AActor* >& out_childDismantleActors) const{ }
 FFluidBox* AFGBuildablePipeline::GetFluidBox(){ return nullptr; }
 TArray< class UFGPipeConnectionComponent* > AFGBuildablePipeline::GetPipeConnections(){ return TArray<class UFGPipeConnectionComponent*>(); }

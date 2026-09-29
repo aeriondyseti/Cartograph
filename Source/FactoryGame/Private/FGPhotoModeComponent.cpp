@@ -50,6 +50,7 @@ bool UFGPhotoModeComponent::ClearPMOption(const FString& optionKey){ return bool
 void UFGPhotoModeComponent::ClearPMOMap(const int expectedNumElements){  }
 float UFGPhotoModeComponent::GetOptionValueFromID(const FString& ID) const{ return float(); }
 void UFGPhotoModeComponent::Server_SetPhotoCameraMode_Implementation(EPhotoCameraMode newMode){ }
+void UFGPhotoModeComponent::Server_ExitPhotoMode_Implementation(){ }
 AFGCharacterPlayer* UFGPhotoModeComponent::GetOwnerPlayerCharacter() const{ return nullptr; }
 AFGPlayerController* UFGPhotoModeComponent::GetPlayerController() const{ return nullptr; }
 void UFGPhotoModeComponent::SetHandEquipmentVisibility(const bool isVisible){  }
@@ -82,6 +83,7 @@ AFGPhotoModeCamera::AFGPhotoModeCamera() : Super() {
 	this->mSpringArmComp->SetupAttachment(GetCapsuleComponent());
 }
 void AFGPhotoModeCamera::HandleDecoupledCameraMoveSpeed(){ }
+void AFGPhotoModeCamera::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode){ Super::OnMovementModeChanged(PrevMovementMode, PreviousCustomMode); }
 void AFGPhotoModeCamera::Server_SetMoveSpeed_Implementation(const float newSpeed){ }
 void AFGPhotoModeCamera::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);

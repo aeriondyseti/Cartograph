@@ -610,6 +610,10 @@ protected:
 	/** Use this to add a valid hit class for this hologram in blueprints begin play. */
 	UFUNCTION( BlueprintCallable, Category = "Hologram" )
 	void AddValidHitClass( TSubclassOf< AActor > hitClass ) { mValidHitClasses.AddUnique( hitClass ); }
+	
+	/** Remove hitClass from valid hit classes for this hologram. */
+	UFUNCTION( BlueprintCallable, Category = "Hologram" )
+	void RemoveValidHitClass( TSubclassOf< AActor > hitClass ) { mValidHitClasses.Remove( hitClass ); }
 
 	/** Check if a class is a valid hit. */
 	virtual bool IsValidHitActor( AActor* hitActor ) const;
@@ -626,7 +630,9 @@ protected:
 	/** Tags for marking components in the hologram. */
 	static const FName HOLOGRAM_MESH_TAG;
 	
-
+	UFUNCTION( BlueprintCallable, Category = "Hologram" )
+	FORCEINLINE bool CanDoClearanceSnapping() const { return mUseBuildClearanceOverlapSnapp && ( mSnapToGuideLines || mUseAutomaticBuildClearanceOverlapSnapp ); }
+	
 private:
 	/**
 	* Setup function. Called when setting up the hologram and when copying the actors content to the hologram in the start.

@@ -136,4 +136,8 @@ private:
 	UPROPERTY( SaveGame, ReplicatedUsing = OnRep_LastEditedBy )
 	FPlayerInfoHandle mLastEditedBy;
 	//</FL>
+
+	/** Indicates if CircuitSwitch should be handled by significance manager */
+	UPROPERTY( EditDefaultsOnly, Category = "Significance" )
+	bool mAddToSignificanceManager = false;
 };

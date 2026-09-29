@@ -38,8 +38,8 @@ public:
 	// End AActor interface
 
 	// Begin FGBuildable
+	virtual void OnLegacyBuildEffectFinished() override;
 	virtual void OnBuildEffectFinished() override;
-	virtual void OnBuildEffectActorFinished() override;
 	// End FGBuildable
 
 	//Begin IFGSignificanceInterface

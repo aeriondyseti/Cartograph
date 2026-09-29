@@ -184,6 +184,13 @@ private:
 	static constexpr float DEFAULT_TIME_PER_AVERAGE_SECTION = 2.f; // Update every 2 seconds
 	static constexpr int32 TOTAL_AVERAGE_DURATION = 60; // In Seconds
 
+	/** World time our replicated throughput/confidence data last actually changed, used to decide when it's safe to go back to sleep */
+	double mLastDataChangeTime{ -BIG_NUMBER };
+
+	// How many sections our data must stay unchanged for before we're allowed to go back to DORM_DormantAll.  
+	// Scaled to this monitor's own update cadence instead of an unrelated fixed number of seconds.
+	static constexpr float DORMANCY_SETTLE_SECTIONS = 2.f;
+
 	UPROPERTY( meta = ( NoAutoJson = true, FGReplicatedUsing = OnRep_MonitorData ) )
 	TArray< FItemMonitorData > mMonitorData;
 

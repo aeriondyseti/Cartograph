@@ -412,6 +412,8 @@ public:
 	void SetConsoleVariable(const char* Variable, bool Active);
 	void UpdateStringTableVariants(bool UsingGamepad);
 
+	bool IsApplicationInForeground() { return bIsApplicationInForeground; };
+
 	UFUNCTION(BlueprintCallable, BlueprintPure)
 	EInputDeviceMode GetInputDeviceMode() { return mInputDeviceMode; }
 
@@ -491,4 +493,6 @@ private:
 	// </FL>
 
 	uint32 GetLocalNetworkVersion();
+
+	bool bIsApplicationInForeground = true;
 };
