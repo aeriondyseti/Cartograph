@@ -20,6 +20,10 @@
 #include "HAL/FileManager.h"
 #include "HAL/PlatformMemory.h"
 #include "Engine/Canvas.h"
+#include "Engine/GameViewportClient.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
+#include "HAL/IConsoleManager.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetRenderingLibrary.h"
@@ -39,7 +43,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.3.0");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.4.0");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
 	constexpr double PollInterval = 0.1;
@@ -87,7 +91,7 @@ namespace
 		return Command == TEXT("build") || Command == TEXT("dismantle") || Command == TEXT("save")
 			|| Command == TEXT("load_save") || Command == TEXT("exit_to_menu")
 			|| Command == TEXT("machine_setup") || Command == TEXT("adopt")
-			|| Command == TEXT("set_layer") || Command == TEXT("set_z_filter");
+			|| Command == TEXT("set_layer") || Command == TEXT("set_z_filter") || Command == TEXT("set_view");
 	}
 
 	double Percentile(const TArray<double>& Sorted, double Fraction)
@@ -787,6 +791,86 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 	{
 		return ContinueDismantle(Command, OutError);
 	}
+	if (Name == TEXT("view") || Name == TEXT("set_view"))
+	{
+		APlayerController* PlayerController = World->GetFirstPlayerController();
+		if (!PlayerController)
+		{
+			OutError = TEXT("There is no player controller");
+			return ECommandStatus::Failed;
+		}
+
+		if (Name == TEXT("set_view"))
+		{
+			FRotator Rotation = PlayerController->GetControlRotation();
+			double Yaw = Rotation.Yaw;
+			double Pitch = Rotation.Pitch;
+			Args.TryGetNumberField(TEXT("yaw"), Yaw);
+			Args.TryGetNumberField(TEXT("pitch"), Pitch);
+			PlayerController->SetControlRotation(FRotator{ Pitch, Yaw, 0.0 });
+		}
+
+		const auto ToJson = [](const FVector& Vector)
+			{
+				return TArray<TSharedPtr<FJsonValue>>{
+					MakeShared<FJsonValueNumber>(Vector.X), MakeShared<FJsonValueNumber>(Vector.Y), MakeShared<FJsonValueNumber>(Vector.Z) };
+			};
+
+		if (const APawn* Pawn = PlayerController->GetPawn())
+		{
+			Data.SetArrayField(TEXT("player_location"), ToJson(Pawn->GetActorLocation()));
+			Data.SetStringField(TEXT("player_class"), Pawn->GetClass()->GetName());
+		}
+		else
+		{
+			Data.SetField(TEXT("player_location"), NullValue());
+			Data.SetField(TEXT("player_class"), NullValue());
+		}
+
+		const FRotator ControlRotation = PlayerController->GetControlRotation();
+		Data.SetNumberField(TEXT("control_yaw"), ControlRotation.Yaw);
+		Data.SetNumberField(TEXT("control_pitch"), ControlRotation.Pitch);
+
+		FVector CameraLocation;
+		FRotator CameraRotation;
+		PlayerController->GetPlayerViewPoint(CameraLocation, CameraRotation);
+		Data.SetArrayField(TEXT("camera_location"), ToJson(CameraLocation));
+		Data.SetNumberField(TEXT("camera_yaw"), CameraRotation.Yaw);
+		Data.SetNumberField(TEXT("camera_pitch"), CameraRotation.Pitch);
+		if (const APlayerCameraManager* CameraManager = PlayerController->PlayerCameraManager)
+		{
+			Data.SetNumberField(TEXT("camera_fov"), CameraManager->GetFOVAngle());
+		}
+
+		// What's rendered at, which isn't necessarily what the settings say
+		if (GEngine && GEngine->GameViewport)
+		{
+			FVector2D ViewportSize;
+			GEngine->GameViewport->GetViewportSize(ViewportSize);
+			Data.SetNumberField(TEXT("viewport_width"), ViewportSize.X);
+			Data.SetNumberField(TEXT("viewport_height"), ViewportSize.Y);
+		}
+		else
+		{
+			Data.SetField(TEXT("viewport_width"), NullValue());
+			Data.SetField(TEXT("viewport_height"), NullValue());
+		}
+		Data.SetNumberField(TEXT("system_resolution_x"), GSystemResolution.ResX);
+		Data.SetNumberField(TEXT("system_resolution_y"), GSystemResolution.ResY);
+		Data.SetNumberField(TEXT("window_mode"), static_cast<int32>(GSystemResolution.WindowMode));
+		for (const TCHAR* Variable : { TEXT("r.ScreenPercentage"), TEXT("r.VSync"), TEXT("t.MaxFPS") })
+		{
+			if (const IConsoleVariable* ConsoleVariable = IConsoleManager::Get().FindConsoleVariable(Variable))
+			{
+				Data.SetNumberField(Variable, ConsoleVariable->GetFloat());
+			}
+			else
+			{
+				Data.SetField(Variable, NullValue());
+			}
+		}
+		return ECommandStatus::Succeeded;
+	}
 	if (Name == TEXT("machine_setup"))
 	{
 		return SetUpMachines(*World, Args, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
@@ -1076,20 +1160,46 @@ FCartographBridge::ECommandStatus FCartographBridge::ContinueBuild(FBridgeComman
 	}
 	Command.Total = Count;
 
-	FVector Origin = FVector::ZeroVector;
-	if (!ReadVector(Args, TEXT("origin"), Origin))
+	// Where to, decided once: what it's relative to can have moved by the time the last ones are built
+	if (!Command.bHasPlacement)
 	{
 		const APlayerController* PlayerController = World->GetFirstPlayerController();
 		const APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
-		if (!Pawn)
+
+		if (!ReadVector(Args, TEXT("origin"), Command.Origin))
 		{
-			OutError = TEXT("There is no player to build at, give an origin");
-			return ECommandStatus::Failed;
+			if (!Pawn)
+			{
+				OutError = TEXT("There is no player to build at, give an origin");
+				return ECommandStatus::Failed;
+			}
+			Command.Origin = Pawn->GetActorLocation();
 		}
-		Origin = Pawn->GetActorLocation();
+
+		// "view": X is the direction that's looked in, level with the ground, Y is to the right of it
+		FString Orient;
+		if (Args.TryGetStringField(TEXT("orient"), Orient) && Orient == TEXT("view"))
+		{
+			if (!PlayerController)
+			{
+				OutError = TEXT("There is no player to take the view of");
+				return ECommandStatus::Failed;
+			}
+			Command.Orientation = FRotator{ 0.0, PlayerController->GetControlRotation().Yaw, 0.0 }.Quaternion();
+		}
+		double Yaw = 0;
+		if (Args.TryGetNumberField(TEXT("yaw"), Yaw))
+		{
+			Command.Orientation = FRotator{ 0.0, Yaw, 0.0 }.Quaternion();
+		}
+		Command.bHasPlacement = true;
 	}
+	const FVector Origin = Command.Origin;
+
 	FVector Offset = FVector::ZeroVector;
 	ReadVector(Args, TEXT("offset"), Offset);
+	bool bSnapToGround = false;
+	Args.TryGetBoolField(TEXT("snap_to_ground"), bSnapToGround);
 	double Spacing = 800;
 	Args.TryGetNumberField(TEXT("spacing"), Spacing);
 	int32 Columns = 20;
@@ -1104,7 +1214,9 @@ FCartographBridge::ECommandStatus FCartographBridge::ContinueBuild(FBridgeComman
 		// Goes on where the group ends, so that they don't end up in each other
 		Command.SettledFrames = Group.Num();
 		Command.Data->SetStringField(TEXT("buildable_class"), BuildableClass->GetPathName());
-		Command.Data->SetStringField(TEXT("origin"), (Origin + Offset).ToString());
+		// What it's relative to, to be given again to have the same once more
+		Command.Data->SetArrayField(TEXT("origin"), {
+			MakeShared<FJsonValueNumber>(Origin.X), MakeShared<FJsonValueNumber>(Origin.Y), MakeShared<FJsonValueNumber>(Origin.Z) });
 	}
 	const int32 FirstSlot = Command.SettledFrames;
 
@@ -1120,8 +1232,33 @@ FCartographBridge::ECommandStatus FCartographBridge::ContinueBuild(FBridgeComman
 	while (Command.Done < Wanted)
 	{
 		const int32 Slot = FirstSlot + Command.Done;
-		const FVector Location = Origin + Offset + FVector{ (Slot % Columns) * Spacing, (Slot / Columns) * Spacing, 0.0 };
-		const FTransform Transform{ FQuat::Identity, Location };
+		// As it has been all along: the columns along X, the rows along Y. X is forward when it's given a direction.
+		const FVector InGrid = Offset + FVector{ (Slot % Columns) * Spacing, (Slot / Columns) * Spacing, 0.0 };
+		FVector Location = Origin + Command.Orientation.RotateVector(InGrid);
+		if (bSnapToGround)
+		{
+			FHitResult Hit;
+			FCollisionQueryParams Query{ SCENE_QUERY_STAT(CartographBridgeGround), false };
+			if (const APlayerController* PlayerController = World->GetFirstPlayerController())
+			{
+				Query.AddIgnoredActor(PlayerController->GetPawn());
+			}
+			if (World->LineTraceSingleByChannel(Hit, Location + FVector{ 0, 0, 5000 }, Location - FVector{ 0, 0, 50000 },
+				ECC_WorldStatic, Query))
+			{
+				Location.Z = Hit.ImpactPoint.Z;
+			}
+			else
+			{
+				Command.SettledFramesMissedGround++;
+			}
+		}
+		const FTransform Transform{ Command.Orientation, Location };
+		if (Command.Done == 0)
+		{
+			Command.Data->SetArrayField(TEXT("first_location"), {
+				MakeShared<FJsonValueNumber>(Location.X), MakeShared<FJsonValueNumber>(Location.Y), MakeShared<FJsonValueNumber>(Location.Z) });
+		}
 
 		AFGBuildable* Buildable = BuildableSubsystem->BeginSpawnBuildable(BuildableClass, Transform);
 		if (!Buildable)
@@ -1153,6 +1290,11 @@ FCartographBridge::ECommandStatus FCartographBridge::ContinueBuild(FBridgeComman
 	}
 
 	Command.Data->SetNumberField(TEXT("spawned"), Command.Done);
+	Command.Data->SetNumberField(TEXT("yaw"), Command.Orientation.Rotator().Yaw);
+	if (bSnapToGround)
+	{
+		Command.Data->SetNumberField(TEXT("no_ground_found"), Command.SettledFramesMissedGround);
+	}
 	Command.Data->SetStringField(TEXT("group"), GroupName);
 	Command.Data->SetNumberField(TEXT("group_size"), Group.Num());
 	return ECommandStatus::Succeeded;

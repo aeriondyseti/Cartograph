@@ -100,6 +100,12 @@ struct FBridgeCommand
 	int32 Total = 0;
 	int32 SettledFrames = 0;
 	bool bWaitingForCallback = false;
+
+	// Where a build goes
+	bool bHasPlacement = false;
+	FVector Origin = FVector::ZeroVector;
+	FQuat Orientation = FQuat::Identity;
+	int32 SettledFramesMissedGround = 0;
 	TArray<int32> LightweightIndices;
 };
 
