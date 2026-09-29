@@ -46,7 +46,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.5.1");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.5.2");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
 	constexpr double PollInterval = 0.1;
@@ -718,9 +718,20 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 		Data.SetStringField(TEXT("requested_save"), SaveName);
 		Data.SetNumberField(TEXT("world_generation_at_request"), static_cast<double>(WorldBeginPlayCount));
 
-		// The load goes on after this, the world that's there now is not the one to wait for
-		PendingLoadSave = SaveName;
-		PendingLoadGeneration = WorldBeginPlayCount;
+		if (Method != TEXT("manager") && Method != TEXT("travel"))
+		{
+			OutError = FString::Printf(TEXT("There is no method %s, it's manager or travel"), *Method);
+			return ECommandStatus::Failed;
+		}
+
+		// The load goes on after this, the world that's there now is not the one to wait for.
+		// Only once the load is on its way: when it didn't start, the world that's there is the one that stays.
+		const auto ExpectNewWorld = [this, &SaveName, Generation = WorldBeginPlayCount]
+			{
+				PendingLoadSave = SaveName;
+				PendingLoadGeneration = Generation;
+			};
+
 		if (Method == TEXT("manager"))
 		{
 			UFGSaveSystem* SaveSystem = UFGSaveSystem::Get(World);
@@ -743,8 +754,10 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 				OutError = TEXT("The save system didn't start loading the save");
 				return ECommandStatus::Failed;
 			}
+			ExpectNewWorld();
 			return ECommandStatus::Succeeded;
 		}
+		ExpectNewWorld();
 
 		FString Map = DefaultMap;
 		Args.TryGetStringField(TEXT("map"), Map);
