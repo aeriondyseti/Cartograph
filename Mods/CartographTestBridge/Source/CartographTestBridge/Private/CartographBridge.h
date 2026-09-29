@@ -1,0 +1,158 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Containers/Ticker.h"
+#include "Dom/JsonObject.h"
+#include "Templates/SubclassOf.h"
+#include "UObject/WeakObjectPtr.h"
+
+class AFGBuildable;
+class UFGRecipe;
+class UWorld;
+
+
+/// Appends to files off the game thread, in the order the lines were handed over
+class FBridgeFileWriter
+{
+public:
+	void Append(const FString& Path, FString&& Text);
+	void Overwrite(const FString& Path, FString&& Text);
+	void Flush();
+
+private:
+	struct FPendingWrite
+	{
+		FString Path;
+		FString Text;
+		bool bAppend;
+	};
+
+	void WritePending();
+
+	FCriticalSection PendingMutex;
+	TArray<FPendingWrite> Pending;
+
+	FCriticalSection WriteMutex;
+};
+
+
+struct FBridgeSampleRow
+{
+	uint64 Frame;
+	double Time;
+	double DeltaMs;
+	double GameThreadMs;
+	double RenderThreadMs;
+};
+
+struct FBridgeSampler
+{
+	double StartTime = 0;
+	uint64 StartFrame = 0;
+	TArray<FBridgeSampleRow> Rows;
+};
+
+
+/// A buildable the bridge has constructed. Becomes a lightweight one when the actor has migrated.
+struct FBridgeBuildable
+{
+	TSubclassOf<AFGBuildable> BuildableClass;
+	FTransform Transform;
+	TWeakObjectPtr<AFGBuildable> Actor;
+};
+
+
+struct FBridgeCommand
+{
+	FString Id;
+	FString Name;
+	TSharedPtr<FJsonObject> Args;
+
+	uint64 FrameStart = 0;
+	double TimeStart = 0;
+	bool bStarted = false;
+
+	TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+
+	// Progress of the ones that take more than a frame
+	double Deadline = 0;
+	int32 Done = 0;
+	int32 Total = 0;
+	int32 SettledFrames = 0;
+	bool bWaitingForCallback = false;
+	TArray<int32> LightweightIndices;
+};
+
+
+class FCartographBridge
+{
+public:
+	explicit FCartographBridge(const FString& InDirectory);
+	~FCartographBridge();
+
+private:
+	enum class ECommandStatus : uint8
+	{
+		Running,
+		Succeeded,
+		Failed
+	};
+
+	bool Tick(float DeltaTime);
+
+	void ReadCompletedIds();
+	void FailInterruptedCommands();
+	void PollCommands();
+	void Finish(FBridgeCommand& Command, bool bSucceeded, const FString& Error);
+
+	ECommandStatus Start(FBridgeCommand& Command, FString& OutError);
+	ECommandStatus Continue(FBridgeCommand& Command, FString& OutError);
+
+	ECommandStatus ContinueBuild(FBridgeCommand& Command, FString& OutError);
+	ECommandStatus ContinueDismantle(FBridgeCommand& Command, FString& OutError);
+
+	void FillState(FJsonObject& Data) const;
+	void FillMemoryStats(FJsonObject& Data) const;
+	bool HashRenderTarget(FJsonObject& Data, FString& OutError) const;
+	void StopSampler(const FString& Name, FJsonObject& Data);
+
+	void AddEvent(const TCHAR* Event, const TSharedPtr<FJsonObject>& Detail = nullptr);
+
+	void OnWorldBeginPlay(UWorld* World);
+	void OnWorldTearDown(UWorld* World);
+
+	UWorld* GetGameWorld() const;
+	double Now() const;
+
+	static FString ToLine(const TSharedRef<FJsonObject>& Object);
+
+	FString Directory;
+	FString CommandsPath;
+	FString ResultsPath;
+	FString EventsPath;
+	FString StatusPath;
+	FString StartedPath;
+
+	FTSTicker::FDelegateHandle TickHandle;
+	FDelegateHandle WorldBeginPlayHandle;
+	FDelegateHandle WorldTearDownHandle;
+
+	FBridgeFileWriter Writer;
+
+	double StartTime = 0;
+	double LastTickTime = 0;
+	double NextPollTime = 0;
+	double NextStatusTime = 0;
+
+	int64 CommandsOffset = 0;
+	TSet<FString> CompletedIds;
+	TArray<FBridgeCommand> Queue;
+
+	TMap<FString, FBridgeSampler> Samplers;
+	TMap<FString, TArray<FBridgeBuildable>> Groups;
+
+	uint64 WorldBeginPlayCount = 0;
+
+	/// What the game has called back with for the command that's waiting for it
+	TOptional<TPair<bool, FString>> CallbackResult;
+};
