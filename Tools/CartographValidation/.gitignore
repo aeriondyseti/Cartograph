@@ -1,0 +1,12 @@
+# Everything the tools write beside themselves while they run
+Bridge/
+Runs/
+AudioCues/
+phase.txt
+stop-monitor
+stop-gpu-monitor
+stop-focus-monitor
+stop-manual-audio
+*.csv
+*.log
+__pycache__/
