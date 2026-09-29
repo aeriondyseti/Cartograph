@@ -27,6 +27,7 @@
 #include "Buildables/FGBuildableConveyorBase.h"
 #include "Buildables/FGBuildablePipeBase.h"
 #include "Tests/FGTestBlueprintFunctionLibrary.h"
+#include "Buildables/FGBuildableStorage.h"
 #include "FGLightweightBuildableSubsystem.h"
 #include "FGPlayerController.h"
 #include "FGRecipe.h"
@@ -59,7 +60,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.6.5");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.6.6");
 	constexpr const TCHAR* TestSavePrefix = TEXT("Cartograph_Test_");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
@@ -108,6 +109,7 @@ namespace
 		return Command == TEXT("build") || Command == TEXT("dismantle") || Command == TEXT("save")
 			|| Command == TEXT("delete_save") || Command == TEXT("game_rules") || Command == TEXT("give_items")
 			|| Command == TEXT("power_link") || Command == TEXT("fuel") || Command == TEXT("reset_fuse") || Command == TEXT("spline_link")
+			|| Command == TEXT("stock")
 			|| Command == TEXT("load_save") || Command == TEXT("exit_to_menu")
 			|| Command == TEXT("machine_setup") || Command == TEXT("adopt")
 			|| Command == TEXT("set_layer") || Command == TEXT("set_z_filter") || Command == TEXT("set_view") || Command == TEXT("teleport");
@@ -977,7 +979,7 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 		return ECommandStatus::Succeeded;
 	}
 	if (Name == TEXT("power_link") || Name == TEXT("fuel") || Name == TEXT("power_state") || Name == TEXT("reset_fuse")
-		|| Name == TEXT("spline_link") || Name == TEXT("belt_state") || Name == TEXT("factory_state"))
+		|| Name == TEXT("spline_link") || Name == TEXT("belt_state") || Name == TEXT("factory_state") || Name == TEXT("stock"))
 	{
 		return RunPowerCommand(*World, Name, Args, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
 	}
@@ -2567,6 +2569,51 @@ bool FCartographBridge::RunPowerCommand(UWorld& World, const FString& Name, cons
 		// Right after; whether it holds shows on a later tick, in power_state
 		Data.SetBoolField(TEXT("fuse_triggered_after"), Circuit->IsFuseTriggered());
 		Data.SetNumberField(TEXT("circuit_production_capacity"), Circuit->GetPowerProductionCapacity());
+		return true;
+	}
+	if (Name == TEXT("stock"))
+	{
+		// Into the storage inventory of the containers of a group, as far as there's room. Only storage buildings;
+		// machines are filled by machine_setup, generators by fuel.
+		FString GroupName, ItemPath;
+		int32 Count = 0;
+		if (!Args.TryGetStringField(TEXT("group"), GroupName) || !Args.TryGetStringField(TEXT("item"), ItemPath)
+			|| !Args.TryGetNumberField(TEXT("count"), Count) || Count <= 0 || Count > 100000)
+		{
+			OutError = TEXT("group, item and count (1 to 100000 per container) are required");
+			return false;
+		}
+		const TArray<FBridgeBuildable>* Group = Groups.Find(GroupName);
+		const TSubclassOf<UFGItemDescriptor> ItemClass = LoadClass<UFGItemDescriptor>(nullptr, *ItemPath);
+		if (!Group || !ItemClass)
+		{
+			OutError = Group ? FString::Printf(TEXT("Can't load the item %s"), *ItemPath) : TEXT("The bridge hasn't built anything in that group");
+			return false;
+		}
+		int32 Stocked = 0, NotStorage = 0, ItemsAdded = 0, ItemsLeftOver = 0;
+		for (const FBridgeBuildable& Member : *Group)
+		{
+			AFGBuildableStorage* Storage = Cast<AFGBuildableStorage>(Member.Actor.Get());
+			UFGInventoryComponent* Inventory = Storage ? Storage->GetStorageInventory() : nullptr;
+			if (!Inventory)
+			{
+				NotStorage++;
+				continue;
+			}
+			const int32 Added = Inventory->AddStack(FInventoryStack{ Count, ItemClass }, true);
+			ItemsAdded += Added;
+			ItemsLeftOver += Count - Added;
+			Stocked += Added > 0 ? 1 : 0;
+		}
+		Data.SetNumberField(TEXT("stocked"), Stocked);
+		Data.SetNumberField(TEXT("not_storage"), NotStorage);
+		Data.SetNumberField(TEXT("items_added"), ItemsAdded);
+		Data.SetNumberField(TEXT("items_left_over"), ItemsLeftOver);
+		if (Stocked == 0)
+		{
+			OutError = TEXT("No container of the group took any");
+			return false;
+		}
 		return true;
 	}
 	if (Name == TEXT("fuel"))
