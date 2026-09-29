@@ -223,13 +223,16 @@ public:
 	virtual void DispatchLifecycleEvent(ELifecyclePhase Phase) override;
 
 	void OnWorldLoaded(UWorld* World);
-	void OnWorldUnloaded();
+	void OnWorldTearDown(UWorld* World);
 
 	void OnLayerConfigChanged();
 
 	const FBuildLayerData* GetBuildLayerData(uint32 ClassHash);
 
 	bool DoesBuildingExist(uint32 ClassHash) const;
+
+	// Applies BuildableClassRedirectMap
+	TSubclassOf<AFGBuildable> ResolveBuildableClass(UClass* BuildableClass) const;
 
 	template<typename T>
 	const T* GetDataByBuildableClass(const TMap<TSoftClassPtr<AFGBuildable>, T>& ClassMap, const TMap<TSoftClassPtr<UFGBuildCategory>, T>& CategoryMap, UClass* BuildableClass) const;
@@ -249,6 +252,9 @@ private:
 	void OnCoroutineFinishedOrCancelled();
 
 	void ExecuteRedrawMapCoroutine(bool bRedrawEntirely);
+
+	void UpdateZFilter();
+	void ResetBuildingData();
 
 	void RegisterMenuButton() const;
 
@@ -425,7 +431,6 @@ protected:
 	FBox2D RedrawArea;
 	std::array<uint32, 4> ScissorArea;
 
-	bool IsInWorld = false;
     bool IsClient = false;
 
 	// True while the player is viewing the map. Gates GPU drawing and render-target allocation so the
@@ -451,8 +456,8 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	float MaxHeight = 100;
 
-	float MinCached;
-    float MaxCached;
+	float MinCached = 0;
+    float MaxCached = 1;
 
     UPROPERTY(BlueprintReadOnly)
     bool DoShowBuildings = true;
