@@ -42,7 +42,7 @@ local too.
 |---|---|
 | `bridge_client.py` | `send` one command, or `run` a scenario file of up to 500 commands with assertions (`_expect`, `_expect_near`, `_expect_min`, `_expect_delta`, `_capture`, `_same_hash_as`, `_different_hash_as`, `_same_data_as`). A request id is written once; rerunning with the same run id resumes without repeating completed commands. |
 | `make_onscreen_scenarios.py` | Writes `onscreen_preflight.json`, `onscreen_preflight_cleanup.json` and `onscreen_measure.json` from a saved `view` result, a save name and optionally an explicit layout. Submits nothing. |
-| `analyze_frames.py` | Per sample: p50, p95, p99, maximum, counts over 33.3, 50 and 100 ms, full-redraw intervals, and the three worst frames with the commands that overlap them. Overlap is correlation, not cause. |
+| `analyze_frames.py` | Per sample: p50, p95, p99, maximum, counts over 33.3, 50 and 100 ms, full-redraw intervals, and the three worst frames with the commands that overlap them. Overlap is correlation, not cause. `completed: true` on an interval means the full redraw was seen to stop being active within the sample, by finishing or by being cancelled; it does not say the map was repainted completely. |
 | `summarize_run.py` | Command durations and, with `--memory`, memory per phase from `monitor_memory.ps1` output. |
 | `analyze_manual.py` | Frame statistics for the action windows of a guided manual pass, defined by the audio log. |
 | `monitor_memory.ps1` | Process private bytes, working set and per-process GPU memory counters, once per second. |
@@ -92,7 +92,8 @@ python summarize_run.py candidate_01 --memory memory-01.csv
   roof. On a platform, give an explicit height and turn it off.
 - **`verify_indices` checks Cartograph's own structures only**, not the world.
   To check that hand-made changes were tracked, compare `building_count` before a
-  save with the count after loading it.
+  save with the count after loading it. Equal totals support that they were; they
+  cannot exclude missed events that cancel each other out.
 - **`analyze_manual.py` maps sample time to wall-clock time through
   `bridge_status.json`**, which belongs to the running game process. Run it before
   the game is restarted, or the mapping is wrong.
@@ -101,6 +102,11 @@ python summarize_run.py candidate_01 --memory memory-01.csv
   the settings each build logs at load, not the hash.
 - **`Recipe_SmelterMk1` builds a foundry**, going by the class the bridge reports
   (`Build_FoundryMk1_C`). The scenario generator's `foundry` entry is right.
+- **The game's autosave writes into the session's own slots.** A test save made
+  from someone's world keeps that world's session name, so with it loaded for more
+  than a few minutes the periodic autosave overwrites the owner's
+  `<session>_autosave_N.sav` files. Back up the save folder before testing, and
+  give test saves a session name of their own or turn autosave off.
 - Do not build, cook or package on the machine while a sample is running.
 
 ## Privacy
