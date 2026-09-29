@@ -60,7 +60,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.6.7");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.6.8");
 	constexpr const TCHAR* TestSavePrefix = TEXT("Cartograph_Test_");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
@@ -2342,6 +2342,27 @@ bool FCartographBridge::RunPowerCommand(UWorld& World, const FString& Name, cons
 					};
 				Object->SetNumberField(TEXT("input_items"), CountItems(Machine->GetInputInventory()));
 				Object->SetNumberField(TEXT("output_items"), CountItems(Machine->GetOutputInventory()));
+			}
+			// GetStorageInventory isn't const, the storage isn't changed
+			if (AFGBuildableStorage* Storage = const_cast<AFGBuildableStorage*>(Cast<AFGBuildableStorage>(Factory)))
+			{
+				// What's in it, by item
+				TArray<FInventoryStack> Stacks;
+				if (const UFGInventoryComponent* Inventory = Storage->GetStorageInventory())
+				{
+					Inventory->GetInventoryStacks(Stacks);
+				}
+				TMap<FString, int32> ByItem;
+				for (const FInventoryStack& Stack : Stacks)
+				{
+					ByItem.FindOrAdd(Stack.Item.GetItemClass() ? Stack.Item.GetItemClass()->GetName() : FString{ TEXT("?") }) += Stack.NumItems;
+				}
+				TSharedRef<FJsonObject> Contents = MakeShared<FJsonObject>();
+				for (const TPair<FString, int32>& Entry : ByItem)
+				{
+					Contents->SetNumberField(Entry.Key, Entry.Value);
+				}
+				Object->SetObjectField(TEXT("storage_items"), Contents);
 			}
 			TArray<UFGFactoryConnectionComponent*> Connections;
 			Factory->GetComponents(Connections);
