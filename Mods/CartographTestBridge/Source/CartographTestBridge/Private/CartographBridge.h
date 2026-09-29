@@ -122,6 +122,10 @@ private:
 	void FillState(FJsonObject& Data) const;
 	void FillMemoryStats(FJsonObject& Data) const;
 	bool HashRenderTarget(FJsonObject& Data, FString& OutError) const;
+	bool ProbeCanvas(UWorld& World, FJsonObject& Data, FString& OutError);
+	bool SetUpMachines(UWorld& World, const FJsonObject& Args, FJsonObject& Data, FString& OutError);
+	bool ListMachines(UWorld& World, const FJsonObject& Args, FJsonObject& Data, FString& OutError);
+	bool AdoptBuildables(UWorld& World, const FJsonObject& Args, FJsonObject& Data, FString& OutError);
 	void StopSampler(const FString& Name, FJsonObject& Data);
 
 	void AddEvent(const TCHAR* Event, const TSharedPtr<FJsonObject>& Detail = nullptr);

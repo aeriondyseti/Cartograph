@@ -2,6 +2,8 @@
 
 #include "Async/Async.h"
 #include "Buildables/FGBuildable.h"
+#include "Buildables/FGBuildableManufacturer.h"
+#include "FGInventoryComponent.h"
 #include "CartographGameInstanceModule.h"
 #include "CartographTestBridge.h"
 #include "Engine/Engine.h"
@@ -17,7 +19,10 @@
 #include "FGSaveSession.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformMemory.h"
+#include "Engine/Canvas.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetRenderingLibrary.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/FileHelper.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
@@ -726,6 +731,18 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 	{
 		return ContinueDismantle(Command, OutError);
 	}
+	if (Name == TEXT("machine_setup"))
+	{
+		return SetUpMachines(*World, Args, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
+	}
+	if (Name == TEXT("machines"))
+	{
+		return ListMachines(*World, Args, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
+	}
+	if (Name == TEXT("adopt"))
+	{
+		return AdoptBuildables(*World, Args, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
+	}
 
 	if (!Cartograph)
 	{
@@ -759,6 +776,112 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 	if (Name == TEXT("rt_hash"))
 	{
 		return HashRenderTarget(Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
+	}
+	if (Name == TEXT("canvas_probe"))
+	{
+		return ProbeCanvas(*World, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
+	}
+	if (Name == TEXT("layers"))
+	{
+		TArray<TSharedPtr<FJsonValue>> Categories;
+		for (const FLayerCategoryData& Category : Cartograph->LayerCategories)
+		{
+			TSharedRef<FJsonObject> CategoryObject = MakeShared<FJsonObject>();
+			CategoryObject->SetStringField(TEXT("name"), Category.Name.ToString());
+			CategoryObject->SetBoolField(TEXT("enabled"), !Cartograph->RuntimeConfig.DisabledLayerMainCategory.Contains(Category.Name));
+
+			const TSet<FName>* DisabledSubCategories = Cartograph->RuntimeConfig.DisabledLayerSubCategory.Find(Category.Name);
+			TArray<TSharedPtr<FJsonValue>> SubCategories;
+			for (const FLayerSubCategoryData& SubCategory : Category.SubCategories)
+			{
+				TSharedRef<FJsonObject> SubCategoryObject = MakeShared<FJsonObject>();
+				SubCategoryObject->SetStringField(TEXT("name"), SubCategory.Name.ToString());
+				SubCategoryObject->SetBoolField(TEXT("enabled"), !DisabledSubCategories || !DisabledSubCategories->Contains(SubCategory.Name));
+				SubCategories.Add(MakeShared<FJsonValueObject>(SubCategoryObject));
+			}
+			CategoryObject->SetArrayField(TEXT("sub_categories"), SubCategories);
+			Categories.Add(MakeShared<FJsonValueObject>(CategoryObject));
+		}
+		Data.SetArrayField(TEXT("categories"), Categories);
+		Data.SetNumberField(TEXT("disabled_buildable_count"), Cartograph->RuntimeConfig.DisabledLayerBuildable.Num());
+		return ECommandStatus::Succeeded;
+	}
+	if (Name == TEXT("set_layer"))
+	{
+		// What the checkboxes of the layer menu do. Kept by the game with the rest of the layer settings,
+		// so a test has to put back what it changes.
+		FString Main;
+		bool bEnabled = true;
+		if (!Args.TryGetStringField(TEXT("main"), Main) || !Args.TryGetBoolField(TEXT("enabled"), bEnabled))
+		{
+			OutError = TEXT("main and enabled are required");
+			return ECommandStatus::Failed;
+		}
+		const FLayerCategoryData* Category = Cartograph->LayerCategories.FindByPredicate(
+			[&Main](const FLayerCategoryData& Candidate) { return Candidate.Name.ToString() == Main; });
+		if (!Category)
+		{
+			OutError = TEXT("There is no such main category");
+			return ECommandStatus::Failed;
+		}
+
+		FString Sub;
+		if (Args.TryGetStringField(TEXT("sub"), Sub) && !Sub.IsEmpty())
+		{
+			const FLayerSubCategoryData* SubCategory = Category->SubCategories.FindByPredicate(
+				[&Sub](const FLayerSubCategoryData& Candidate) { return Candidate.Name.ToString() == Sub; });
+			if (!SubCategory)
+			{
+				OutError = TEXT("There is no such sub category");
+				return ECommandStatus::Failed;
+			}
+			TSet<FName>& Disabled = Cartograph->RuntimeConfig.DisabledLayerSubCategory.FindOrAdd(Category->Name);
+			if (bEnabled)
+			{
+				Disabled.Remove(SubCategory->Name);
+			}
+			else
+			{
+				Disabled.Add(SubCategory->Name);
+			}
+		}
+		else if (bEnabled)
+		{
+			Cartograph->RuntimeConfig.DisabledLayerMainCategory.Remove(Category->Name);
+		}
+		else
+		{
+			Cartograph->RuntimeConfig.DisabledLayerMainCategory.Add(Category->Name);
+		}
+		Cartograph->OnLayerConfigChanged();
+		return ECommandStatus::Succeeded;
+	}
+	if (Name == TEXT("set_z_filter"))
+	{
+		// Fractions of the height range of what's been built, as the sliders of the map give them
+		double Min = 0;
+		double Max = 1;
+		if (!Args.TryGetNumberField(TEXT("min"), Min) || !Args.TryGetNumberField(TEXT("max"), Max)
+			|| Min < 0 || Max > 1 || Min > Max)
+		{
+			OutError = TEXT("min and max are required, 0 <= min <= max <= 1");
+			return ECommandStatus::Failed;
+		}
+		UFunction* OnZFilterUpdated = Cartograph->FindFunction(TEXT("OnZFilterUpdated"));
+		if (!OnZFilterUpdated)
+		{
+			OutError = TEXT("Cartograph has no OnZFilterUpdated");
+			return ECommandStatus::Failed;
+		}
+		struct
+		{
+			float Min;
+			float Max;
+		} Parameters{ static_cast<float>(Min), static_cast<float>(Max) };
+		Cartograph->ProcessEvent(OnZFilterUpdated, &Parameters);
+		Data.SetNumberField(TEXT("min"), Min);
+		Data.SetNumberField(TEXT("max"), Max);
+		return ECommandStatus::Succeeded;
 	}
 
 	OutError = FString::Printf(TEXT("Unknown command %s"), *Name);
@@ -1257,6 +1380,323 @@ bool FCartographBridge::HashRenderTarget(FJsonObject& Data, FString& OutError) c
 	Data.SetStringField(TEXT("hash"), FString::Printf(TEXT("%016llx"), Hash));
 	Data.SetNumberField(TEXT("nonzero_pixels"), static_cast<double>(NonZero));
 	Data.SetNumberField(TEXT("duration"), FPlatformTime::Seconds() - Begin);
+	return true;
+}
+
+
+namespace
+{
+	bool ReadBox(const FJsonObject& Args, FBox& OutBox, FString& OutError)
+	{
+		FVector Min, Max;
+		if (!ReadVector(Args, TEXT("box_min"), Min) || !ReadVector(Args, TEXT("box_max"), Max))
+		{
+			OutError = TEXT("box_min and box_max are required, [x, y, z] each");
+			return false;
+		}
+		OutBox = FBox{ Min.ComponentMin(Max), Min.ComponentMax(Max) };
+		return true;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> ToJson(const UFGInventoryComponent* Inventory)
+	{
+		TArray<TSharedPtr<FJsonValue>> Values;
+		if (!Inventory)
+		{
+			return Values;
+		}
+
+		TArray<FInventoryStack> Stacks;
+		Inventory->GetInventoryStacks(Stacks);
+		for (const FInventoryStack& Stack : Stacks)
+		{
+			TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+			Object->SetStringField(TEXT("item"), GetPathNameSafe(Stack.Item.GetItemClass()));
+			Object->SetNumberField(TEXT("count"), Stack.NumItems);
+			Values.Add(MakeShared<FJsonValueObject>(Object));
+		}
+		return Values;
+	}
+}
+
+
+bool FCartographBridge::SetUpMachines(UWorld& World, const FJsonObject& Args, FJsonObject& Data, FString& OutError)
+{
+	FString GroupName = TEXT("default");
+	Args.TryGetStringField(TEXT("group"), GroupName);
+	const TArray<FBridgeBuildable>* Group = Groups.Find(GroupName);
+	if (!Group)
+	{
+		OutError = TEXT("The bridge hasn't built anything in that group");
+		return false;
+	}
+
+	FString RecipePath;
+	if (!Args.TryGetStringField(TEXT("recipe"), RecipePath))
+	{
+		OutError = TEXT("recipe is required, the one the machines are to produce with");
+		return false;
+	}
+	const TSubclassOf<UFGRecipe> Recipe = LoadClass<UFGRecipe>(nullptr, *RecipePath);
+	if (!Recipe)
+	{
+		OutError = FString::Printf(TEXT("Can't load the recipe %s"), *RecipePath);
+		return false;
+	}
+
+	// How many times what the recipe takes is put into the input
+	int32 InputBatches = 1;
+	Args.TryGetNumberField(TEXT("input_batches"), InputBatches);
+	bool bPaused = false;
+	const bool bSetPaused = Args.TryGetBoolField(TEXT("paused"), bPaused);
+	double Potential = 1;
+	const bool bSetPotential = Args.TryGetNumberField(TEXT("potential"), Potential);
+
+	const TArray<FItemAmount> Ingredients = UFGRecipe::GetIngredients(&World, Recipe);
+
+	int32 SetUp = 0;
+	int32 NotAMachine = 0;
+	int32 ItemsAdded = 0;
+	for (const FBridgeBuildable& Buildable : *Group)
+	{
+		AFGBuildableManufacturer* Machine = Cast<AFGBuildableManufacturer>(Buildable.Actor.Get());
+		if (!Machine)
+		{
+			NotAMachine++;
+			continue;
+		}
+
+		Machine->SetRecipe(Recipe);
+		if (UFGInventoryComponent* Input = Machine->GetInputInventory())
+		{
+			for (const FItemAmount& Ingredient : Ingredients)
+			{
+				if (InputBatches > 0)
+				{
+					ItemsAdded += Input->AddStack(FInventoryStack{ Ingredient.Amount * InputBatches, Ingredient.ItemClass }, true);
+				}
+			}
+		}
+		if (bSetPaused)
+		{
+			Machine->SetIsProductionPaused(bPaused);
+		}
+		if (bSetPotential)
+		{
+			Machine->SetPendingPotential(static_cast<float>(Potential));
+		}
+		SetUp++;
+	}
+
+	Data.SetStringField(TEXT("group"), GroupName);
+	Data.SetNumberField(TEXT("set_up"), SetUp);
+	Data.SetNumberField(TEXT("not_a_machine"), NotAMachine);
+	Data.SetNumberField(TEXT("items_added"), ItemsAdded);
+	if (SetUp == 0)
+	{
+		OutError = TEXT("None of the group is a machine that takes a recipe");
+		return false;
+	}
+	return true;
+}
+
+
+bool FCartographBridge::ListMachines(UWorld& World, const FJsonObject& Args, FJsonObject& Data, FString& OutError)
+{
+	FBox Box;
+	if (!ReadBox(Args, Box, OutError))
+	{
+		return false;
+	}
+	const AFGBuildableSubsystem* BuildableSubsystem = AFGBuildableSubsystem::Get(&World);
+	if (!BuildableSubsystem)
+	{
+		OutError = TEXT("There is no buildable subsystem");
+		return false;
+	}
+
+	constexpr int32 MaxListed = 500;
+	int32 Count = 0;
+	TArray<TSharedPtr<FJsonValue>> Machines;
+	for (const AFGBuildable* Buildable : BuildableSubsystem->GetAllBuildablesRef())
+	{
+		const AFGBuildableManufacturer* Machine = Cast<AFGBuildableManufacturer>(Buildable);
+		if (!Machine || !Box.IsInsideOrOn(Machine->GetActorLocation()))
+		{
+			continue;
+		}
+		if (++Count > MaxListed)
+		{
+			continue;
+		}
+
+		const FVector Location = Machine->GetActorLocation();
+		TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+		Object->SetStringField(TEXT("class"), Machine->GetClass()->GetPathName());
+		Object->SetArrayField(TEXT("location"), {
+			MakeShared<FJsonValueNumber>(Location.X), MakeShared<FJsonValueNumber>(Location.Y), MakeShared<FJsonValueNumber>(Location.Z) });
+		if (const TSubclassOf<UFGRecipe> Recipe = Machine->GetCurrentRecipe())
+		{
+			Object->SetStringField(TEXT("recipe"), Recipe->GetPathName());
+		}
+		else
+		{
+			Object->SetField(TEXT("recipe"), NullValue());
+		}
+		Object->SetBoolField(TEXT("paused"), Machine->IsProductionPaused());
+		Object->SetNumberField(TEXT("potential"), Machine->GetCurrentPotential());
+		Object->SetNumberField(TEXT("pending_potential"), Machine->GetPendingPotential());
+		Object->SetNumberField(TEXT("production_progress"), Machine->GetProductionProgress());
+		Object->SetArrayField(TEXT("input"), ToJson(Machine->GetInputInventory()));
+		Object->SetArrayField(TEXT("output"), ToJson(Machine->GetOutputInventory()));
+		Machines.Add(MakeShared<FJsonValueObject>(Object));
+	}
+
+	// In the order of where they are, the one they're kept in isn't the same after a load
+	Machines.Sort([](const TSharedPtr<FJsonValue>& A, const TSharedPtr<FJsonValue>& B)
+		{
+			const TArray<TSharedPtr<FJsonValue>>& LocationA = A->AsObject()->GetArrayField(TEXT("location"));
+			const TArray<TSharedPtr<FJsonValue>>& LocationB = B->AsObject()->GetArrayField(TEXT("location"));
+			for (int32 i = 0; i < 3; i++)
+			{
+				const double ValueA = LocationA[i]->AsNumber();
+				const double ValueB = LocationB[i]->AsNumber();
+				if (ValueA != ValueB)
+				{
+					return ValueA < ValueB;
+				}
+			}
+			return false;
+		});
+
+	Data.SetNumberField(TEXT("count"), Count);
+	Data.SetBoolField(TEXT("truncated"), Count > MaxListed);
+	Data.SetArrayField(TEXT("machines"), Machines);
+	return true;
+}
+
+
+bool FCartographBridge::AdoptBuildables(UWorld& World, const FJsonObject& Args, FJsonObject& Data, FString& OutError)
+{
+	// What the bridge has built is forgotten when the world goes, a save that was made with it still there
+	// has it back after a load. This takes what's in the box for the bridge's, to be dismantled by it.
+	// Meant for the box that the bridge builds in, it doesn't ask what it's taking.
+	FBox Box;
+	if (!ReadBox(Args, Box, OutError))
+	{
+		return false;
+	}
+	FString GroupName = TEXT("default");
+	Args.TryGetStringField(TEXT("group"), GroupName);
+
+	AFGBuildableSubsystem* BuildableSubsystem = AFGBuildableSubsystem::Get(&World);
+	const AFGLightweightBuildableSubsystem* LightweightSubsystem = AFGLightweightBuildableSubsystem::Get(&World);
+	if (!BuildableSubsystem)
+	{
+		OutError = TEXT("There is no buildable subsystem");
+		return false;
+	}
+
+	TArray<FBridgeBuildable>& Group = Groups.FindOrAdd(GroupName);
+	TSet<FIntVector> Known;
+	for (const FBridgeBuildable& Buildable : Group)
+	{
+		Known.Add(Quantize(Buildable.Transform.GetLocation()));
+	}
+
+	int32 Actors = 0;
+	for (AFGBuildable* Buildable : BuildableSubsystem->GetAllBuildablesRef())
+	{
+		if (IsValid(Buildable) && Box.IsInsideOrOn(Buildable->GetActorLocation())
+			&& !Known.Contains(Quantize(Buildable->GetActorLocation())))
+		{
+			Known.Add(Quantize(Buildable->GetActorLocation()));
+			Group.Add({ Buildable->GetClass(), Buildable->GetActorTransform(), Buildable });
+			Actors++;
+		}
+	}
+
+	int32 Lightweights = 0;
+	if (LightweightSubsystem)
+	{
+		for (const auto& [BuildableClass, Instances] : LightweightSubsystem->GetAllLightweightBuildableInstances())
+		{
+			for (const FRuntimeBuildableInstanceData& Instance : Instances)
+			{
+				if (Instance.IsValid() && Box.IsInsideOrOn(Instance.Transform.GetLocation())
+					&& !Known.Contains(Quantize(Instance.Transform.GetLocation())))
+				{
+					Known.Add(Quantize(Instance.Transform.GetLocation()));
+					Group.Add({ BuildableClass, Instance.Transform, nullptr });
+					Lightweights++;
+				}
+			}
+		}
+	}
+
+	Data.SetStringField(TEXT("group"), GroupName);
+	Data.SetNumberField(TEXT("adopted_actors"), Actors);
+	Data.SetNumberField(TEXT("adopted_lightweights"), Lightweights);
+	Data.SetNumberField(TEXT("group_size"), Group.Num());
+	return true;
+}
+
+
+bool FCartographBridge::ProbeCanvas(UWorld& World, FJsonObject& Data, FString& OutError)
+{
+	// Drawing to a render target goes through a canvas that the world has one of, for everything that does so.
+	// Cartograph keeps a draw open over many frames, so something else drawing in between takes it from under it.
+	// This does such a draw, to see whether that's the case, and puts things back as they were.
+	UCanvas* SharedCanvas = World.GetCanvasForRenderingToTarget();
+	if (!SharedCanvas)
+	{
+		OutError = TEXT("The world has no canvas for rendering to a target");
+		return false;
+	}
+
+	const UCartographGameInstanceModule* Cartograph = UCartographGameInstanceModule::Instance;
+	const FCartographDebugState State = Cartograph ? Cartograph->GetDebugState() : FCartographDebugState{};
+
+	FCanvas* const CanvasBefore = SharedCanvas->Canvas;
+	const int32 SizeXBefore = SharedCanvas->SizeX;
+	const int32 SizeYBefore = SharedCanvas->SizeY;
+
+	UTextureRenderTarget2D* Scratch = NewObject<UTextureRenderTarget2D>(GetTransientPackage());
+	Scratch->RenderTargetFormat = RTF_RGBA8;
+	Scratch->InitAutoFormat(64, 64);
+	Scratch->UpdateResourceImmediate(true);
+
+	AddEvent(TEXT("canvas_probe_begin"));
+
+	UCanvas* ProbeCanvas = nullptr;
+	FVector2D Size;
+	FDrawToRenderTargetContext Context;
+	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(&World, Scratch, ProbeCanvas, Size, Context);
+	FCanvas* const CanvasDuring = SharedCanvas->Canvas;
+	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(&World, Context);
+	FCanvas* const CanvasAfter = SharedCanvas->Canvas;
+
+	const bool bWasInUse = CanvasBefore != nullptr;
+	const bool bWasTakenOver = bWasInUse && CanvasDuring != CanvasBefore;
+	bool bRestored = false;
+	if (bWasInUse && CanvasAfter != CanvasBefore)
+	{
+		SharedCanvas->Init(SizeXBefore, SizeYBefore, nullptr, CanvasBefore);
+		bRestored = true;
+	}
+
+	AddEvent(TEXT("canvas_probe_end"));
+	Scratch->ReleaseResource();
+
+	Data.SetBoolField(TEXT("shared_canvas_was_in_use"), bWasInUse);
+	Data.SetBoolField(TEXT("same_canvas_object_as_probe"), ProbeCanvas == SharedCanvas);
+	Data.SetBoolField(TEXT("was_taken_over"), bWasTakenOver);
+	Data.SetBoolField(TEXT("was_left_null"), bWasInUse && CanvasAfter == nullptr);
+	Data.SetBoolField(TEXT("restored"), bRestored);
+	Data.SetBoolField(TEXT("cartograph_redraw_active"), State.bIsRedrawActive);
+	Data.SetBoolField(TEXT("cartograph_redrawing_entirely"), State.bIsRedrawingEntirely);
+	Data.SetNumberField(TEXT("shared_canvas_size_x_before"), SizeXBefore);
+	Data.SetNumberField(TEXT("shared_canvas_size_y_before"), SizeYBefore);
 	return true;
 }
 
