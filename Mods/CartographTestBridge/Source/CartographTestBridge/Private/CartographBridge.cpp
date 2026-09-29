@@ -20,6 +20,8 @@
 #include "Buildables/FGBuildableGeneratorFuel.h"
 #include "Buildables/FGBuildableWire.h"
 #include "FGPowerConnectionComponent.h"
+#include "FGPowerCircuit.h"
+#include "FGCircuitSubsystem.h"
 #include "FGLightweightBuildableSubsystem.h"
 #include "FGPlayerController.h"
 #include "FGRecipe.h"
@@ -52,7 +54,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.6.0");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.6.1");
 	constexpr const TCHAR* TestSavePrefix = TEXT("Cartograph_Test_");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
@@ -100,7 +102,7 @@ namespace
 	{
 		return Command == TEXT("build") || Command == TEXT("dismantle") || Command == TEXT("save")
 			|| Command == TEXT("delete_save") || Command == TEXT("game_rules") || Command == TEXT("give_items")
-			|| Command == TEXT("power_link") || Command == TEXT("fuel")
+			|| Command == TEXT("power_link") || Command == TEXT("fuel") || Command == TEXT("reset_fuse")
 			|| Command == TEXT("load_save") || Command == TEXT("exit_to_menu")
 			|| Command == TEXT("machine_setup") || Command == TEXT("adopt")
 			|| Command == TEXT("set_layer") || Command == TEXT("set_z_filter") || Command == TEXT("set_view") || Command == TEXT("teleport");
@@ -969,7 +971,7 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 		Data.SetBoolField(TEXT("creative_mode"), GameState->IsCreativeModeEnabled());
 		return ECommandStatus::Succeeded;
 	}
-	if (Name == TEXT("power_link") || Name == TEXT("fuel") || Name == TEXT("power_state"))
+	if (Name == TEXT("power_link") || Name == TEXT("fuel") || Name == TEXT("power_state") || Name == TEXT("reset_fuse"))
 	{
 		return RunPowerCommand(*World, Name, Args, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
 	}
@@ -2130,6 +2132,11 @@ namespace
 			}
 		}
 		Object->SetArrayField(TEXT("circuit_ids"), Circuits);
+		if (UFGPowerCircuit* Circuit = Connections.IsEmpty() || !Connections[0] ? nullptr : Connections[0]->GetPowerCircuit())
+		{
+			Object->SetBoolField(TEXT("fuse_triggered"), Circuit->IsFuseTriggered());
+			Object->SetNumberField(TEXT("circuit_production_capacity"), Circuit->GetPowerProductionCapacity());
+		}
 		if (const AFGBuildableFactory* Factory = Cast<AFGBuildableFactory>(&Buildable))
 		{
 			Object->SetBoolField(TEXT("has_power"), Factory->HasPower());
@@ -2228,6 +2235,42 @@ bool FCartographBridge::RunPowerCommand(UWorld& World, const FString& Name, cons
 		return true;
 	}
 
+	if (Name == TEXT("reset_fuse"))
+	{
+		// What a player does at a generator or switch once there is enough power again: resets the fuse of
+		// the circuit the building is on. Nothing more; if the circuit is still overloaded it goes again.
+		// The circuit by its id, which outlasts a load, or by a building the bridge has built
+		UFGPowerCircuit* Circuit = nullptr;
+		int32 CircuitId = INDEX_NONE;
+		if (Args.TryGetNumberField(TEXT("circuit_id"), CircuitId))
+		{
+			const AFGCircuitSubsystem* CircuitSubsystem = AFGCircuitSubsystem::Get(&World);
+			Circuit = CircuitSubsystem ? CircuitSubsystem->FindCircuit<UFGPowerCircuit>(CircuitId) : nullptr;
+		}
+		else
+		{
+			AFGBuildable* Building = FindGroupMember(Args, TEXT("group"), TEXT("index"), OutError);
+			if (!Building)
+			{
+				return false;
+			}
+			const UFGPowerConnectionComponent* Connection = Building->FindComponentByClass<UFGPowerConnectionComponent>();
+			Circuit = Connection ? Connection->GetPowerCircuit() : nullptr;
+			CircuitId = Connection ? Connection->GetCircuitID() : INDEX_NONE;
+		}
+		if (!Circuit)
+		{
+			OutError = FString::Printf(TEXT("There is no power circuit %d"), CircuitId);
+			return false;
+		}
+		Data.SetNumberField(TEXT("circuit_id"), CircuitId);
+		Data.SetBoolField(TEXT("fuse_triggered_before"), Circuit->IsFuseTriggered());
+		Circuit->ResetFuse(Cast<AFGPlayerController>(World.GetFirstPlayerController()));
+		// Right after; whether it holds shows on a later tick, in power_state
+		Data.SetBoolField(TEXT("fuse_triggered_after"), Circuit->IsFuseTriggered());
+		Data.SetNumberField(TEXT("circuit_production_capacity"), Circuit->GetPowerProductionCapacity());
+		return true;
+	}
 	if (Name == TEXT("fuel"))
 	{
 		// Into the fuel slots of the generators of a group, only what they take as fuel
@@ -2281,37 +2324,71 @@ bool FCartographBridge::RunPowerCommand(UWorld& World, const FString& Name, cons
 
 	// power_state: read only. Groups only last as long as the world they were built in, after a load
 	// what was built is found again by where it is (machines), not by group.
+	// Either a group, or a box of the form machines takes: then every building in it with a power connection
+	TArray<const AFGBuildable*> Buildings;
+	int32 Gone = 0;
 	FString GroupName;
-	if (!Args.TryGetStringField(TEXT("group"), GroupName))
+	if (Args.TryGetStringField(TEXT("group"), GroupName))
 	{
-		OutError = TEXT("group is required");
-		return false;
+		const TArray<FBridgeBuildable>* Group = Groups.Find(GroupName);
+		if (!Group)
+		{
+			OutError = TEXT("The bridge hasn't built anything in that group");
+			return false;
+		}
+		for (const FBridgeBuildable& Member : *Group)
+		{
+			if (const AFGBuildable* Buildable = Member.Actor.Get())
+			{
+				Buildings.Add(Buildable);
+			}
+			else
+			{
+				Gone++;
+			}
+		}
 	}
-	const TArray<FBridgeBuildable>* Group = Groups.Find(GroupName);
-	if (!Group)
+	else
 	{
-		OutError = TEXT("The bridge hasn't built anything in that group");
-		return false;
+		FBox Box;
+		if (!ReadBox(Args, Box, OutError))
+		{
+			OutError = TEXT("group, or a box, is required");
+			return false;
+		}
+		const AFGBuildableSubsystem* BuildableSubsystem = AFGBuildableSubsystem::Get(&World);
+		if (!BuildableSubsystem)
+		{
+			OutError = TEXT("There is no buildable subsystem");
+			return false;
+		}
+		for (const AFGBuildable* Buildable : BuildableSubsystem->GetAllBuildablesRef())
+		{
+			if (Buildable && Box.IsInsideOrOn(Buildable->GetActorLocation())
+				&& Buildable->FindComponentByClass<UFGPowerConnectionComponent>())
+			{
+				Buildings.Add(Buildable);
+			}
+		}
 	}
 	constexpr int32 MaxListed = 500;
 	TArray<TSharedPtr<FJsonValue>> Members;
-	int32 Gone = 0;
-	for (const FBridgeBuildable& Member : *Group)
+	for (const AFGBuildable* Buildable : Buildings)
 	{
-		const AFGBuildable* Buildable = Member.Actor.Get();
-		if (!Buildable)
+		if (Members.Num() >= MaxListed)
 		{
-			Gone++;
-			continue;
+			break;
 		}
-		if (Members.Num() < MaxListed)
-		{
-			Members.Add(MakeShared<FJsonValueObject>(DescribePower(*Buildable)));
-		}
+		TSharedRef<FJsonObject> Object = DescribePower(*Buildable);
+		const FVector Location = Buildable->GetActorLocation();
+		Object->SetArrayField(TEXT("location"), {
+			MakeShared<FJsonValueNumber>(Location.X), MakeShared<FJsonValueNumber>(Location.Y), MakeShared<FJsonValueNumber>(Location.Z) });
+		Members.Add(MakeShared<FJsonValueObject>(Object));
 	}
 	Data.SetArrayField(TEXT("buildings"), Members);
+	Data.SetNumberField(TEXT("count"), Buildings.Num());
 	Data.SetNumberField(TEXT("gone"), Gone);
-	Data.SetBoolField(TEXT("truncated"), Group->Num() - Gone > MaxListed);
+	Data.SetBoolField(TEXT("truncated"), Buildings.Num() > MaxListed);
 	return true;
 }
 
