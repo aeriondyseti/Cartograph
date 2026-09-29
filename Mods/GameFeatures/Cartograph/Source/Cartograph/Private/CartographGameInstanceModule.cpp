@@ -4,6 +4,10 @@
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "CanvasItem.h"
+#include "CanvasTypes.h"
+#include "RenderingThread.h"
+#include "RHIUtilities.h"
+#include "TextureResource.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Engine/Canvas.h"
 #include "Engine/CanvasRenderTarget2D.h"
@@ -334,7 +338,7 @@ void UCartographGameInstanceModule::OnWorldTearDown(UWorld* World)
 	// Don't hold the render target outside of a world, not even when it's configured to stay resident.
 	// With a canvas still open on it, OnCoroutineFinishedOrCancelled releases it once that has ended.
 	// Not decided on the coroutine being done: the initial gather is one as well, and never gets there.
-	if (!RenderContext.RenderTarget)
+	if (!IsMapDrawOpen())
 	{
 		ReleaseRenderTargetResource();
 	}
@@ -636,9 +640,11 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 	// My guess is because EndDraw and BeginDraw are called in the same frame, so I'm putting it here.
 	co_await UE5Coro::Latent::NextTick();
 
-	UCanvas* Canvas = nullptr;
-	FVector2D _;
-	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(this, RenderTarget, Canvas, _, RenderContext);
+	UCanvas* Canvas = BeginMapDraw();
+	if (!Canvas)
+	{
+		co_return;
+	}
 	Canvas->Canvas->SetRenderTargetScissorRect(ScissorRect);
 
 	FCanvasTileItem ClearItem{
@@ -875,16 +881,84 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 }
 
 
+UCanvas* UCartographGameInstanceModule::BeginMapDraw()
+{
+	// What UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget does, with a canvas that's the map's own
+	checkf(!IsMapDrawOpen(), TEXT("The draw before this one hasn't been ended"));
+
+	UWorld* World = GetWorld();
+	if (!FApp::CanEverRender() || !World || !RenderTarget)
+	{
+		return nullptr;
+	}
+	FTextureRenderTargetResource* Resource = RenderTarget->GameThread_GetRenderTargetResource();
+	if (!Resource)
+	{
+		return nullptr;
+	}
+
+	World->FlushDeferredParameterCollectionInstanceUpdates();
+
+	if (!MapCanvas)
+	{
+		MapCanvas = NewObject<UCanvas>(this);
+	}
+	// Drawn right away, as the items are made over many frames
+	MapDrawCanvas = new FCanvas(Resource, nullptr, World, World->GetFeatureLevel(), FCanvas::CDM_ImmediateDrawing);
+	MapCanvas->Init(RenderTarget->SizeX, RenderTarget->SizeY, nullptr, MapDrawCanvas);
+
+	ENQUEUE_RENDER_COMMAND(CartographFlushDeferredResourceUpdate)(
+		[Resource](FRHICommandListImmediate& RHICmdList)
+		{
+			Resource->FlushDeferredResourceUpdate(RHICmdList);
+		});
+
+	return MapCanvas;
+}
+
+
+void UCartographGameInstanceModule::EndMapDraw()
+{
+	// What UKismetRenderingLibrary::EndDrawCanvasToRenderTarget does
+	if (!IsMapDrawOpen())
+	{
+		return;
+	}
+
+	MapDrawCanvas->Flush_GameThread();
+	delete MapDrawCanvas;
+	MapDrawCanvas = nullptr;
+	if (MapCanvas)
+	{
+		MapCanvas->Canvas = nullptr;
+	}
+
+	FTextureRenderTargetResource* Resource = RenderTarget ? RenderTarget->GameThread_GetRenderTargetResource() : nullptr;
+	if (!Resource)
+	{
+		return;
+	}
+	ENQUEUE_RENDER_COMMAND(CartographResolveRenderTarget)(
+		[Resource](FRHICommandListImmediate& RHICmdList)
+		{
+			// A multisampled one has been resolved by the canvas already
+			if (!Resource->GetRenderTargetTexture()->GetDesc().IsMultisample())
+			{
+				TransitionAndCopyTexture(RHICmdList, Resource->GetRenderTargetTexture(), Resource->TextureRHI, {});
+			}
+		});
+}
+
+
 void UCartographGameInstanceModule::OnCoroutineFinishedOrCancelled()
 {
     CARTO_LOG_DEBUG("OnCoroutineFinishedOrCancelled");
 
 	const bool bWillRelease = bWorldTornDown || (bFreeRenderTargetWhenClosed && !bMapVisible);
 
-	if (RenderContext.RenderTarget)
+	if (IsMapDrawOpen())
 	{
-        UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, RenderContext);
-		RenderContext = {};
+		EndMapDraw();
 
 		// Ending the draw only resolves the top mip, the rest of them would stay what they were.
 		// Not with another redraw right behind this one, that one gets here as well.

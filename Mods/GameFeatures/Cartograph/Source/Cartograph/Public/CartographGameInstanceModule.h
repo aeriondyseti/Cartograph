@@ -19,6 +19,8 @@
 
 class AFGBuildable;
 class AFGLightweightBuildableSubsystem;
+class FCanvas;
+class UCanvas;
 class UCanvasRenderTarget2D;
 class UFGBuildCategory;
 class UFGBuildSubCategory;
@@ -296,6 +298,12 @@ private:
 
 	void OnCoroutineFinishedOrCancelled();
 
+	/// @return The canvas to draw the map with, null when it can't be drawn to
+	UCanvas* BeginMapDraw();
+	/// Does nothing without a draw that has been begun
+	void EndMapDraw();
+	bool IsMapDrawOpen() const { return MapDrawCanvas != nullptr; }
+
 	// The map can be closed in ways that don't go through what the blueprint hook is on (the map key for one),
 	// so the widget itself is listened to as well
 	void OnMapWidgetDestructed(UUserWidget* Widget);
@@ -461,7 +469,13 @@ protected:
 	bool IsInitializing = false;
 
 	UE5Coro::TCoroutine<> Coroutine = UE5Coro::TCoroutine<>::CompletedCoroutine;
-	FDrawToRenderTargetContext RenderContext;
+
+	// A redraw keeps its canvas open over many frames. The one the world has for drawing to render targets
+	// is shared with everything else that does so, which takes it over and ends it with its own draw,
+	// so the map is drawn with a canvas of its own.
+	UPROPERTY(Transient)
+	TObjectPtr<UCanvas> MapCanvas;
+	FCanvas* MapDrawCanvas = nullptr;
 	TArray<FBuildingData> CurrentBuildingData;
 
 	/// To get the building data from the quad tree,
