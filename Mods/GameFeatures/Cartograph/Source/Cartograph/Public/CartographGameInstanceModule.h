@@ -268,7 +268,9 @@ public:
 	TSubclassOf<AFGBuildable> ResolveBuildableClass(UClass* BuildableClass) const;
 
 	// For tools and tests
-	FCartographDebugState GetDebugState() const;
+	/// @param bCountDrawnBuildings Goes through all the building data, so not something to do every frame.
+	/// DrawnBuildingCount is -1 without it.
+	FCartographDebugState GetDebugState(bool bCountDrawnBuildings = false) const;
 	UCanvasRenderTarget2D* GetRenderTarget() const { return RenderTarget; }
 	/// Checks the building data, the index redirector and the quad tree against each other.
 	/// @return The number of inconsistencies, the first few are described in OutErrors.

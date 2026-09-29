@@ -879,10 +879,19 @@ void UCartographGameInstanceModule::OnCoroutineFinishedOrCancelled()
 {
     CARTO_LOG_DEBUG("OnCoroutineFinishedOrCancelled");
 
+	const bool bWillRelease = bWorldTornDown || (bFreeRenderTargetWhenClosed && !bMapVisible);
+
 	if (RenderContext.RenderTarget)
 	{
         UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, RenderContext);
 		RenderContext = {};
+
+		// Ending the draw only resolves the top mip, the rest of them would stay what they were.
+		// Not with another redraw right behind this one, that one gets here as well.
+		if (bGenerateMips && !bWillRelease && !IsPendingRedraw && RenderTarget && RenderTarget->GetResource())
+		{
+			RenderTarget->UpdateResourceImmediate(false);
+		}
 	}
 
 	if (!IsPendingRedraw)
@@ -1362,7 +1371,7 @@ void UCartographGameInstanceModule::RequestEntireRedraw()
 }
 
 
-FCartographDebugState UCartographGameInstanceModule::GetDebugState() const
+FCartographDebugState UCartographGameInstanceModule::GetDebugState(bool bCountDrawnBuildings) const
 {
 	FCartographDebugState State;
 	State.bIsInitializing = IsInitializing;
@@ -1376,9 +1385,14 @@ FCartographDebugState UCartographGameInstanceModule::GetDebugState() const
 	State.PendingRemoveCount = PendingRemoveBuildingData.Num();
 
 	State.BuildingCount = CurrentBuildingData.Num();
-	for (const FBuildingData& BuildingData : CurrentBuildingData)
+	State.DrawnBuildingCount = -1;
+	if (bCountDrawnBuildings)
 	{
-		State.DrawnBuildingCount += BuildingData.VisualBoxCache.bIsValid ? 1 : 0;
+		State.DrawnBuildingCount = 0;
+		for (const FBuildingData& BuildingData : CurrentBuildingData)
+		{
+			State.DrawnBuildingCount += BuildingData.VisualBoxCache.bIsValid ? 1 : 0;
+		}
 	}
 	State.IndexRedirectorCount = BuildingDataIndexRedirector.Num();
 
