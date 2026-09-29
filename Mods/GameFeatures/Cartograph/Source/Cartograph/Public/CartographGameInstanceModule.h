@@ -207,8 +207,42 @@ struct FRuntimeConfig
 };
 
 
+/// A snapshot of the module's internal state, for tools and tests. Plain data, nothing in here is live.
+struct FCartographDebugState
+{
+	bool bIsInitializing = false;
+	float InitializeProgress = 0;
+
+	bool bIsRedrawActive = false;
+	bool bIsRedrawingEntirely = false;
+	bool bIsPendingRedraw = false;
+	bool bIsPendingRedrawEntire = false;
+	int32 PendingAddCount = 0;
+	int32 PendingRemoveCount = 0;
+
+	int32 BuildingCount = 0;
+	int32 DrawnBuildingCount = 0;
+	int32 IndexRedirectorCount = 0;
+
+	bool bIsClient = false;
+	bool bIsMapVisible = false;
+	bool bRenderTargetNeedsFullRedraw = false;
+	bool bIsWorldTornDown = false;
+
+	bool bFreeRenderTargetWhenClosed = false;
+	bool bGenerateMips = false;
+	int32 ConfiguredRenderTextureSize = 0;
+
+	bool bHasRenderTarget = false;
+	bool bHasRenderTargetResource = false;
+	bool bRenderTargetAutoGeneratesMips = false;
+	int32 RenderTargetSizeX = 0;
+	int32 RenderTargetSizeY = 0;
+};
+
+
 /**
- * 
+ *
  */
 UCLASS(PrioritizeCategories=("Draw Data", "Layer Data", "UI", "Advanced", "Default", "Generated Data"))
 class CARTOGRAPH_API UCartographGameInstanceModule : public UGameInstanceModule
@@ -232,6 +266,16 @@ public:
 
 	// Applies BuildableClassRedirectMap
 	TSubclassOf<AFGBuildable> ResolveBuildableClass(UClass* BuildableClass) const;
+
+	// For tools and tests
+	FCartographDebugState GetDebugState() const;
+	UCanvasRenderTarget2D* GetRenderTarget() const { return RenderTarget; }
+	/// Checks the building data, the index redirector and the quad tree against each other.
+	/// @return The number of inconsistencies, the first few are described in OutErrors.
+	int32 VerifyBuildingIndices(TArray<FString>& OutErrors) const;
+	void RequestEntireRedraw();
+	/// What showing/hiding the vanilla map does to the module, without the widgets
+	void SetMapVisible(bool bVisible);
 
 	template<typename T>
 	const T* GetDataByBuildableClass(const TMap<TSoftClassPtr<AFGBuildable>, T>& ClassMap, const TMap<TSoftClassPtr<UFGBuildCategory>, T>& CategoryMap, UClass* BuildableClass) const;

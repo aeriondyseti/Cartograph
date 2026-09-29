@@ -332,8 +332,9 @@ void UCartographGameInstanceModule::OnWorldTearDown(UWorld* World)
 	Coroutine.Cancel();
 
 	// Don't hold the render target outside of a world, not even when it's configured to stay resident.
-	// With a draw still in flight, OnCoroutineFinishedOrCancelled releases it once the canvas has ended.
-	if (Coroutine.IsDone())
+	// With a canvas still open on it, OnCoroutineFinishedOrCancelled releases it once that has ended.
+	// Not decided on the coroutine being done: the initial gather is one as well, and never gets there.
+	if (!RenderContext.RenderTarget)
 	{
 		ReleaseRenderTargetResource();
 	}
@@ -609,10 +610,12 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 
 		const FVector2D MinScreenPosition = world_position_to_screen_position(RedrawArea.Min, FVector::ZeroVector);
         const FVector2D MaxScreenPosition = world_position_to_screen_position(RedrawArea.Max, FVector::ZeroVector);
-		const int32 MinIntX = FMath::Clamp(FMath::FloorToInt(MinScreenPosition.X), 0, GRenderTextureSize);
-        const int32 MinIntY = FMath::Clamp(FMath::FloorToInt(MinScreenPosition.Y), 0, GRenderTextureSize);
-        const int32 MaxIntX = FMath::Clamp(FMath::CeilToInt(MaxScreenPosition.X), 0, GRenderTextureSize);
-        const int32 MaxIntY = FMath::Clamp(FMath::CeilToInt(MaxScreenPosition.Y), 0, GRenderTextureSize);
+		// Clamped before going to an integer, a far away position doesn't fit in one
+		const double Size = GRenderTextureSize;
+		const int32 MinIntX = FMath::FloorToInt32(FMath::Clamp(MinScreenPosition.X, 0.0, Size));
+        const int32 MinIntY = FMath::FloorToInt32(FMath::Clamp(MinScreenPosition.Y, 0.0, Size));
+        const int32 MaxIntX = FMath::CeilToInt32(FMath::Clamp(MaxScreenPosition.X, 0.0, Size));
+        const int32 MaxIntY = FMath::CeilToInt32(FMath::Clamp(MaxScreenPosition.Y, 0.0, Size));
 		if (MinIntX >= MaxIntX || MinIntY >= MaxIntY)
 		{
 			// Nothing of the area is on the map. Must not go on: the canvas ignores an empty scissor rect,
@@ -906,6 +909,10 @@ void UCartographGameInstanceModule::EnsureRenderTargetReady()
 		return;
 	}
 
+	// An existing resource was created with the settings from before, it has to be recreated to take new ones
+	const bool bSettingsChanged = RenderTarget->RenderTargetFormat != RTF_RGBA8
+		|| static_cast<bool>(RenderTarget->bAutoGenerateMips) != bGenerateMips;
+
 	RenderTarget->RenderTargetFormat = RTF_RGBA8;
 	RenderTarget->bAutoGenerateMips = bGenerateMips;
 	RenderTarget->ClearColor = FLinearColor::Transparent;
@@ -916,10 +923,11 @@ void UCartographGameInstanceModule::EnsureRenderTargetReady()
 		RenderTarget->InitAutoFormat(GRenderTextureSize, GRenderTextureSize);
 		bRenderTargetNeedsFullRedraw = true;
 	}
-	else if (!RenderTarget->GetResource())
+	else if (!RenderTarget->GetResource() || bSettingsChanged)
 	{
 		bRenderTargetNeedsFullRedraw = true;
-		// Right size, but the GPU resource was previously released (map was closed) — bring it back.
+		// Right size, but the GPU resource was previously released (map was closed) or has other settings
+		// than the ones wanted now — bring it back / recreate it.
 		// NOTE: must be UpdateResource(), not UpdateResourceImmediate(): the latter early-outs when
 		// there is no existing resource (see UTextureRenderTarget2D::UpdateResourceImmediate), so it
 		// would silently fail to reallocate a released target and the map would render solid white.
@@ -1294,18 +1302,7 @@ TArray<FString> UCartographGameInstanceModule::GetLayerCategoryOptions() const
 
 void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Widget)
 {
-	// Map shown again: bring the render target back (it may have been freed on close). It only needs a
-	// repaint when its contents are stale, and not when an entire redraw is already on its way: reopening
-	// the map while one is running must not restart it.
-	bMapVisible = true;
-	EnsureRenderTargetReady();
-
-	const bool bEntireRedrawActive = !Coroutine.IsDone() && IsRedrawingEntirely;
-	const bool bEntireRedrawPending = IsPendingRedraw && IsPendingRedrawEntire;
-	if (bRenderTargetNeedsFullRedraw && !bEntireRedrawActive && !bEntireRedrawPending)
-	{
-		RedrawMap(true);
-	}
+	SetMapVisible(true);
 
 	UWidget* Menu = Widget->WidgetTree->FindWidget("CartographMenu");
 	CARTO_LOG_ERROR_RETURN_IF_NULL(Menu);
@@ -1325,17 +1322,153 @@ void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Wid
 
 void UCartographGameInstanceModule::OnVanillaMapMenuHidden()
 {
-	// Map closed: free the render target's VRAM (deferred until any in-flight redraw finishes).
-	bMapVisible = false;
+	SetMapVisible(false);
+}
 
-	if (bFreeRenderTargetWhenClosed)
+
+void UCartographGameInstanceModule::SetMapVisible(bool bVisible)
+{
+	bMapVisible = bVisible;
+
+	if (bVisible)
 	{
+		// Map shown again: bring the render target back (it may have been freed on close). It only needs a
+		// repaint when its contents are stale, and not when an entire redraw is already on its way: reopening
+		// the map while one is running must not restart it.
+		EnsureRenderTargetReady();
+
+		const bool bEntireRedrawActive = !Coroutine.IsDone() && IsRedrawingEntirely;
+		const bool bEntireRedrawPending = IsPendingRedraw && IsPendingRedrawEntire;
+		if (bRenderTargetNeedsFullRedraw && !bEntireRedrawActive && !bEntireRedrawPending)
+		{
+			RedrawMap(true);
+		}
+	}
+	else if (bFreeRenderTargetWhenClosed)
+	{
+		// Map closed: free the render target's VRAM (deferred until any in-flight redraw finishes).
 		if (Coroutine.IsDone())
 		{
 			ReleaseRenderTargetResource();
 		}
 		// else: OnCoroutineFinishedOrCancelled releases it once the current draw completes.
 	}
+}
+
+
+void UCartographGameInstanceModule::RequestEntireRedraw()
+{
+	RedrawMap(true);
+}
+
+
+FCartographDebugState UCartographGameInstanceModule::GetDebugState() const
+{
+	FCartographDebugState State;
+	State.bIsInitializing = IsInitializing;
+	State.InitializeProgress = InitializeProgress;
+
+	State.bIsRedrawActive = !IsInitializing && !Coroutine.IsDone();
+	State.bIsRedrawingEntirely = IsRedrawingEntirely;
+	State.bIsPendingRedraw = IsPendingRedraw;
+	State.bIsPendingRedrawEntire = IsPendingRedrawEntire;
+	State.PendingAddCount = PendingAddBuildingData.Num();
+	State.PendingRemoveCount = PendingRemoveBuildingData.Num();
+
+	State.BuildingCount = CurrentBuildingData.Num();
+	for (const FBuildingData& BuildingData : CurrentBuildingData)
+	{
+		State.DrawnBuildingCount += BuildingData.VisualBoxCache.bIsValid ? 1 : 0;
+	}
+	State.IndexRedirectorCount = BuildingDataIndexRedirector.Num();
+
+	State.bIsClient = IsClient;
+	State.bIsMapVisible = bMapVisible;
+	State.bRenderTargetNeedsFullRedraw = bRenderTargetNeedsFullRedraw;
+	State.bIsWorldTornDown = bWorldTornDown;
+
+	State.bFreeRenderTargetWhenClosed = bFreeRenderTargetWhenClosed;
+	State.bGenerateMips = bGenerateMips;
+	State.ConfiguredRenderTextureSize = GRenderTextureSize;
+
+	if (RenderTarget)
+	{
+		State.bHasRenderTarget = true;
+		State.bHasRenderTargetResource = RenderTarget->GetResource() != nullptr;
+		State.bRenderTargetAutoGeneratesMips = RenderTarget->bAutoGenerateMips;
+		State.RenderTargetSizeX = RenderTarget->SizeX;
+		State.RenderTargetSizeY = RenderTarget->SizeY;
+	}
+	return State;
+}
+
+
+int32 UCartographGameInstanceModule::VerifyBuildingIndices(TArray<FString>& OutErrors) const
+{
+	constexpr int32 MaxDescribedErrors = 20;
+	int32 ErrorCount = 0;
+	const auto AddError = [&OutErrors, &ErrorCount](FString&& Error)
+		{
+			if (++ErrorCount <= MaxDescribedErrors)
+			{
+				OutErrors.Add(MoveTemp(Error));
+			}
+		};
+
+	const int32 BuildingNum = CurrentBuildingData.Num();
+	for (int32 i = 1; i < BuildingNum; i++)
+	{
+		if (CurrentBuildingData[i] < CurrentBuildingData[i - 1])
+		{
+			AddError(FString::Printf(TEXT("Building data %d is sorted before %d"), i, i - 1));
+		}
+	}
+
+	TBitArray<> IsReferenced{ false, BuildingNum };
+	TArray<int32> Elements;
+	const int32 RedirectorNum = BuildingDataIndexRedirector.Num();
+	for (int32 i = 0; i < RedirectorNum; i++)
+	{
+		const int32 Index = BuildingDataIndexRedirector[i];
+		if (Index == -1)  // Removed
+		{
+			continue;
+		}
+		if (!CurrentBuildingData.IsValidIndex(Index))
+		{
+			AddError(FString::Printf(TEXT("Redirector %d points to %d, out of %d"), i, Index, BuildingNum));
+			continue;
+		}
+		if (IsReferenced[Index])
+		{
+			AddError(FString::Printf(TEXT("Redirector %d points to %d, which another one points to as well"), i, Index));
+		}
+		IsReferenced[Index] = true;
+
+		const FBox2D& VisualBox = CurrentBuildingData[Index].VisualBoxCache;
+		if (!VisualBox.bIsValid)
+		{
+			AddError(FString::Printf(TEXT("Redirector %d points to %d, which isn't drawn"), i, Index));
+			continue;
+		}
+
+		Elements.Reset();
+		CurrentBuildingQuadTree.GetElements(VisualBox, Elements);
+		if (!Elements.Contains(i))
+		{
+			AddError(FString::Printf(TEXT("Quad tree element %d isn't where building data %d is"), i, Index));
+		}
+	}
+
+	for (int32 i = 0; i < BuildingNum; i++)
+	{
+		if (CurrentBuildingData[i].VisualBoxCache.bIsValid && !IsReferenced[i])
+		{
+			AddError(FString::Printf(TEXT("Building data %d is drawn, but no redirector points to it"), i));
+		}
+	}
+
+	return ErrorCount;
 }
 #pragma endregion
 
