@@ -59,7 +59,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.6.4");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.6.5");
 	constexpr const TCHAR* TestSavePrefix = TEXT("Cartograph_Test_");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
@@ -977,7 +977,7 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 		return ECommandStatus::Succeeded;
 	}
 	if (Name == TEXT("power_link") || Name == TEXT("fuel") || Name == TEXT("power_state") || Name == TEXT("reset_fuse")
-		|| Name == TEXT("spline_link") || Name == TEXT("belt_state"))
+		|| Name == TEXT("spline_link") || Name == TEXT("belt_state") || Name == TEXT("factory_state"))
 	{
 		return RunPowerCommand(*World, Name, Args, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
 	}
@@ -2239,6 +2239,78 @@ namespace
 
 bool FCartographBridge::RunPowerCommand(UWorld& World, const FString& Name, const FJsonObject& Args, FJsonObject& Data, FString& OutError)
 {
+	if (Name == TEXT("factory_state"))
+	{
+		// Read only: every factory building in a box, whether it runs, its recipe and inputs, and each belt
+		// connection: which way, connected to what, and whether it has the inventory it puts items into
+		FBox Box;
+		if (!ReadBox(Args, Box, OutError))
+		{
+			return false;
+		}
+		const AFGBuildableSubsystem* BuildableSubsystem = AFGBuildableSubsystem::Get(&World);
+		TArray<TSharedPtr<FJsonValue>> Buildings;
+		for (AFGBuildable* Candidate : BuildableSubsystem ? BuildableSubsystem->GetAllBuildablesRef() : TArray<AFGBuildable*>{})
+		{
+			const AFGBuildableFactory* Factory = Cast<AFGBuildableFactory>(Candidate);
+			if (!Factory || !Box.IsInsideOrOn(Factory->GetActorLocation()) || Buildings.Num() >= 100)
+			{
+				continue;
+			}
+			TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+			Object->SetStringField(TEXT("class"), Factory->GetClass()->GetName());
+			Object->SetStringField(TEXT("name"), Factory->GetName());
+			Object->SetBoolField(TEXT("has_power"), Factory->HasPower());
+			Object->SetBoolField(TEXT("is_producing"), Factory->IsProducing());
+			Object->SetBoolField(TEXT("is_production_paused"), Factory->IsProductionPaused());
+			Object->SetBoolField(TEXT("can_produce"), Factory->CanProduce());
+			if (const AFGBuildableManufacturer* Machine = Cast<AFGBuildableManufacturer>(Factory))
+			{
+				const TSubclassOf<UFGRecipe> Recipe = Machine->GetCurrentRecipe();
+				Object->SetStringField(TEXT("recipe"), Recipe ? Recipe->GetName() : FString{});
+				const auto CountItems = [](const UFGInventoryComponent* Inventory)
+					{
+						TArray<FInventoryStack> Stacks;
+						if (Inventory)
+						{
+							Inventory->GetInventoryStacks(Stacks);
+						}
+						int32 Items = 0;
+						for (const FInventoryStack& Stack : Stacks)
+						{
+							Items += Stack.NumItems;
+						}
+						return Items;
+					};
+				Object->SetNumberField(TEXT("input_items"), CountItems(Machine->GetInputInventory()));
+				Object->SetNumberField(TEXT("output_items"), CountItems(Machine->GetOutputInventory()));
+			}
+			TArray<UFGFactoryConnectionComponent*> Connections;
+			Factory->GetComponents(Connections);
+			TArray<TSharedPtr<FJsonValue>> ConnectionValues;
+			for (const UFGFactoryConnectionComponent* Connection : Connections)
+			{
+				if (!Connection)
+				{
+					continue;
+				}
+				TSharedRef<FJsonObject> ConnectionObject = MakeShared<FJsonObject>();
+				ConnectionObject->SetStringField(TEXT("name"), Connection->GetName());
+				const EFactoryConnectionDirection Direction = Connection->GetDirection();
+				ConnectionObject->SetStringField(TEXT("direction"), Direction == EFactoryConnectionDirection::FCD_INPUT ? TEXT("input")
+					: Direction == EFactoryConnectionDirection::FCD_OUTPUT ? TEXT("output") : TEXT("other"));
+				const UFGFactoryConnectionComponent* Other = Connection->GetConnection();
+				ConnectionObject->SetStringField(TEXT("connected_to"), Other ? FString::Printf(TEXT("%s.%s"), *GetNameSafe(Other->GetOwner()), *Other->GetName()) : FString{});
+				ConnectionObject->SetBoolField(TEXT("has_inventory"), Connection->GetInventory() != nullptr);
+				ConnectionObject->SetNumberField(TEXT("inventory_access_index"), Connection->GetInventoryAccessIndex());
+				ConnectionValues.Add(MakeShared<FJsonValueObject>(ConnectionObject));
+			}
+			Object->SetArrayField(TEXT("connections"), ConnectionValues);
+			Buildings.Add(MakeShared<FJsonValueObject>(Object));
+		}
+		Data.SetArrayField(TEXT("buildings"), Buildings);
+		return true;
+	}
 	if (Name == TEXT("belt_state"))
 	{
 		// Read only: what the game knows of a belt, whether it's in a conveyor chain (what moves the items),
