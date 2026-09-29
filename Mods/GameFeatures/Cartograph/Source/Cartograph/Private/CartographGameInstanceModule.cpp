@@ -593,18 +593,20 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 		IsRedrawingEntirely = true;
 	}
 
-	// Sometimes lines go crazy (goes to the top or far right) if we don't delay.
-	// My guess is because EndDraw and BeginDraw are called in the same frame, so I'm putting it here.
-	co_await UE5Coro::Latent::NextTick();
-
-	UCanvas* Canvas = nullptr;
-	FVector2D _;
-	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(this, RenderTarget, Canvas, _, RenderContext);
-
 	// The canvas applies this to every pass it renders, so a partial redraw only touches its own area
 	FIntRect ScissorRect{ 0, 0, GRenderTextureSize, GRenderTextureSize };
 	if (!IsRedrawingEntirely)
 	{
+		const bool bIsAreaUsable = RedrawArea.bIsValid
+			&& !RedrawArea.Min.ContainsNaN() && !RedrawArea.Max.ContainsNaN()
+			&& FMath::IsFinite(RedrawArea.Min.X) && FMath::IsFinite(RedrawArea.Min.Y)
+			&& FMath::IsFinite(RedrawArea.Max.X) && FMath::IsFinite(RedrawArea.Max.Y);
+		if (!bIsAreaUsable)
+		{
+			ResetRedrawArea();
+			co_return;
+		}
+
 		const FVector2D MinScreenPosition = world_position_to_screen_position(RedrawArea.Min, FVector::ZeroVector);
         const FVector2D MaxScreenPosition = world_position_to_screen_position(RedrawArea.Max, FVector::ZeroVector);
 		const int32 MinIntX = FMath::Clamp(FMath::FloorToInt(MinScreenPosition.X), 0, GRenderTextureSize);
@@ -614,7 +616,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 		if (MinIntX >= MaxIntX || MinIntY >= MaxIntY)
 		{
 			// Nothing of the area is on the map. Must not go on: the canvas ignores an empty scissor rect,
-			// so the clear below would wipe the entire map.
+			// so the clear would wipe the entire map.
 			ResetRedrawArea();
 			co_return;
 		}
@@ -626,6 +628,14 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
         };
 		CARTO_LOG_DEBUG("RedrawArea: %s", *RedrawArea.ToString());
 	}
+
+	// Sometimes lines go crazy (goes to the top or far right) if we don't delay.
+	// My guess is because EndDraw and BeginDraw are called in the same frame, so I'm putting it here.
+	co_await UE5Coro::Latent::NextTick();
+
+	UCanvas* Canvas = nullptr;
+	FVector2D _;
+	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(this, RenderTarget, Canvas, _, RenderContext);
 	Canvas->Canvas->SetRenderTargetScissorRect(ScissorRect);
 
 	FCanvasTileItem ClearItem{
@@ -1192,20 +1202,23 @@ void UCartographGameInstanceModule::FillBuildLayerDataCache()
 
 void UCartographGameInstanceModule::OnBuildingDataAdd(const FBuildingData& AddedBuildingData, int32 Pos)
 {
+	// Every building takes a slot in CurrentBuildingData, also the ones that aren't drawn,
+	// so the ones after it move regardless of whether this one is in the quad tree.
+	// The initial data is added in sorted order, so there's nothing to shift
+	if (!IsInitializing)
+	{
+		for (int32& Index : BuildingDataIndexRedirector)
+		{
+			if (Index >= Pos)
+			{
+				Index++;
+			}
+		}
+	}
+
 	if (AddedBuildingData.VisualBoxCache.bIsValid)
 	{
 		CurrentBuildingQuadTree.Insert(BuildingDataIndexRedirector.Num(), AddedBuildingData.VisualBoxCache);
-		// The initial data is added in sorted order, so there's nothing to shift
-		if (!IsInitializing)
-		{
-			for (int32& Index : BuildingDataIndexRedirector)
-			{
-				if (Index >= Pos)
-				{
-					Index++;
-				}
-			}
-		}
 		BuildingDataIndexRedirector.Add(Pos);
 	}
 
@@ -1215,21 +1228,19 @@ void UCartographGameInstanceModule::OnBuildingDataAdd(const FBuildingData& Added
 
 void UCartographGameInstanceModule::OnBuildingDataRemove(const FBuildingData& RemovedBuildingData, int32 Pos)
 {
-	if (RemovedBuildingData.VisualBoxCache.bIsValid)
+	// Same as on add: the ones after it move, whether or not this one is in the quad tree
+	const int32 Num = BuildingDataIndexRedirector.Num();
+	for (int32 i = 0; i < Num; i++)
 	{
-		const int32 Num = BuildingDataIndexRedirector.Num();
-		for (int32 i = 0; i < Num; i++)
+		int32& BuildingDataArrayIndex = BuildingDataIndexRedirector[i];
+		if (BuildingDataArrayIndex == Pos)
 		{
-			int32& BuildingDataArrayIndex = BuildingDataIndexRedirector[i];
-			if (BuildingDataArrayIndex == Pos)
-			{
-				CurrentBuildingQuadTree.Remove(i, RemovedBuildingData.VisualBoxCache);
-				BuildingDataArrayIndex = -1;
-			}
-			else if (BuildingDataArrayIndex > Pos)
-			{
-				BuildingDataArrayIndex--;
-			}
+			CurrentBuildingQuadTree.Remove(i, RemovedBuildingData.VisualBoxCache);
+			BuildingDataArrayIndex = -1;
+		}
+		else if (BuildingDataArrayIndex > Pos)
+		{
+			BuildingDataArrayIndex--;
 		}
 	}
 
