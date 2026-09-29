@@ -19,7 +19,8 @@ public:
 	void Overwrite(const FString& Path, FString&& Text);
 	/// For text that takes a while to put together, that's done off the game thread as well
 	void Overwrite(const FString& Path, TUniqueFunction<FString()>&& MakeText);
-	void Flush();
+	/// @return Whether everything that was handed over is in the files now
+	bool Flush();
 
 private:
 	struct FPendingWrite
@@ -38,7 +39,8 @@ private:
 		FCriticalSection WriteMutex;
 	};
 
-	static void WritePending(FState& State);
+	static bool WritePending(FState& State);
+	static bool WriteOnce(const FPendingWrite& Write);
 
 	TSharedRef<FState, ESPMode::ThreadSafe> State = MakeShared<FState, ESPMode::ThreadSafe>();
 };
@@ -131,7 +133,7 @@ private:
 
 	void FillState(FJsonObject& Data) const;
 	void FillMemoryStats(FJsonObject& Data) const;
-	bool HashRenderTarget(FJsonObject& Data, FString& OutError) const;
+	bool HashRenderTarget(const FJsonObject& Args, FJsonObject& Data, FString& OutError) const;
 	bool ProbeCanvas(UWorld& World, FJsonObject& Data, FString& OutError);
 	bool SetUpMachines(UWorld& World, const FJsonObject& Args, FJsonObject& Data, FString& OutError);
 	bool ListMachines(UWorld& World, const FJsonObject& Args, FJsonObject& Data, FString& OutError);

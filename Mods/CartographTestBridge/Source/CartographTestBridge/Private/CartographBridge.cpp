@@ -24,6 +24,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetRenderingLibrary.h"
 #include "Misc/EngineVersion.h"
+#include "ImageUtils.h"
 #include "Misc/FileHelper.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "RenderTimer.h"
@@ -38,7 +39,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.2.0");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.3.0");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
 	constexpr double PollInterval = 0.1;
@@ -136,14 +137,34 @@ void FBridgeFileWriter::Overwrite(const FString& Path, TUniqueFunction<FString()
 }
 
 
-void FBridgeFileWriter::Flush()
+bool FBridgeFileWriter::Flush()
 {
-	WritePending(*State);
+	return WritePending(*State);
 }
 
 
-void FBridgeFileWriter::WritePending(FState& State)
+bool FBridgeFileWriter::WriteOnce(const FPendingWrite& Write)
 {
+	// The one that reads these can have them open at any time, which must not be in the way of writing them
+	if (Write.bAppend)
+	{
+		return FFileHelper::SaveStringToFile(Write.Text, *Write.Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM,
+			&IFileManager::Get(), FILEWRITE_Append | FILEWRITE_AllowRead);
+	}
+
+	// Replaced as a whole, so that it's never read half written
+	const FString TemporaryPath = Write.Path + TEXT(".tmp");
+	return FFileHelper::SaveStringToFile(Write.Text, *TemporaryPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM,
+			&IFileManager::Get(), FILEWRITE_AllowRead)
+		&& IFileManager::Get().Move(*Write.Path, *TemporaryPath, true, true);
+}
+
+
+bool FBridgeFileWriter::WritePending(FState& State)
+{
+	constexpr int32 MaxAttempts = 40;
+	constexpr float SecondsBetweenAttempts = 0.025f;
+
 	// Taken before the pending ones are, that's what keeps the order
 	FScopeLock WriteLock{ &State.WriteMutex };
 
@@ -154,11 +175,36 @@ void FBridgeFileWriter::WritePending(FState& State)
 		State.Pending.Reset();
 	}
 
-	for (const FPendingWrite& Write : ToWrite)
+	for (int32 i = 0; i < ToWrite.Num(); i++)
 	{
-		FFileHelper::SaveStringToFile(Write.Text, *Write.Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM,
-			&IFileManager::Get(), Write.bAppend ? FILEWRITE_Append : FILEWRITE_None);
+		bool bWritten = false;
+		for (int32 Attempt = 0; Attempt < MaxAttempts && !bWritten; Attempt++)
+		{
+			if (Attempt > 0)
+			{
+				FPlatformProcess::Sleep(SecondsBetweenAttempts);
+			}
+			bWritten = WriteOnce(ToWrite[i]);
+		}
+
+		if (!bWritten)
+		{
+			UE_LOG(LogCartographBridge, Error, TEXT("Couldn't write to %s, will be tried again"), *ToWrite[i].Path);
+
+			// Nothing is dropped: this one and the ones after it go back to where they came from, ahead of
+			// what has been added since, to be written with the next ones
+			FScopeLock Lock{ &State.PendingMutex };
+			TArray<FPendingWrite> Remaining;
+			for (int32 j = i; j < ToWrite.Num(); j++)
+			{
+				Remaining.Add(MoveTemp(ToWrite[j]));
+			}
+			Remaining.Append(MoveTemp(State.Pending));
+			State.Pending = MoveTemp(Remaining);
+			return false;
+		}
 	}
+	return true;
 }
 #pragma endregion
 
@@ -476,12 +522,16 @@ bool FCartographBridge::Tick(float)
 			Started->SetStringField(TEXT("id"), Command.Id);
 			Started->SetStringField(TEXT("cmd"), Command.Name);
 			Writer.Append(StartedPath, ToLine(Started));
-			if (ChangesTheWorld(Command.Name))
+			if (ChangesTheWorld(Command.Name) && !Writer.Flush())
 			{
-				Writer.Flush();
+				// Without it being known to have been started, it could be started once more
+				Error = TEXT("Couldn't write that the command is started, it has not been run");
+				Status = ECommandStatus::Failed;
 			}
-
-			Status = Start(Command, Error);
+			else
+			{
+				Status = Start(Command, Error);
+			}
 		}
 		else
 		{
@@ -781,7 +831,7 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 	}
 	if (Name == TEXT("rt_hash"))
 	{
-		return HashRenderTarget(Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
+		return HashRenderTarget(Args, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
 	}
 	if (Name == TEXT("canvas_probe"))
 	{
@@ -1347,7 +1397,7 @@ void FCartographBridge::FillMemoryStats(FJsonObject& Data) const
 }
 
 
-bool FCartographBridge::HashRenderTarget(FJsonObject& Data, FString& OutError) const
+bool FCartographBridge::HashRenderTarget(const FJsonObject& Args, FJsonObject& Data, FString& OutError) const
 {
 	const UCartographGameInstanceModule* Cartograph = UCartographGameInstanceModule::Instance;
 	UCanvasRenderTarget2D* RenderTarget = Cartograph ? Cartograph->GetRenderTarget() : nullptr;
@@ -1374,15 +1424,111 @@ bool FCartographBridge::HashRenderTarget(FJsonObject& Data, FString& OutError) c
 		? CityHash64(reinterpret_cast<const char*>(Pixels.GetData()), Pixels.Num() * sizeof(FColor))
 		: 0;
 
-	MutableThis->AddEvent(TEXT("rt_hash_end"));
-
-	if (!bRead)
+	const int32 Width = RenderTarget->SizeX;
+	const int32 Height = RenderTarget->SizeY;
+	if (!bRead || Pixels.Num() != Width * Height)
 	{
+		MutableThis->AddEvent(TEXT("rt_hash_end"));
 		OutError = TEXT("Couldn't read the render target");
 		return false;
 	}
-	Data.SetNumberField(TEXT("width"), RenderTarget->SizeX);
-	Data.SetNumberField(TEXT("height"), RenderTarget->SizeY);
+
+	// To find where two of them differ: the same for parts of it, only of the ones that have something in them
+	int32 Tiles = 0;
+	if (Args.TryGetNumberField(TEXT("tiles"), Tiles) && Tiles > 0)
+	{
+		Tiles = FMath::Min(Tiles, 256);
+		const int32 TileWidth = FMath::DivideAndRoundUp(Width, Tiles);
+		const int32 TileHeight = FMath::DivideAndRoundUp(Height, Tiles);
+
+		TArray<TSharedPtr<FJsonValue>> TileValues;
+		TArray<FColor> TilePixels;
+		for (int32 TileY = 0; TileY < Tiles; TileY++)
+		{
+			for (int32 TileX = 0; TileX < Tiles; TileX++)
+			{
+				const int32 BeginX = TileX * TileWidth;
+				const int32 BeginY = TileY * TileHeight;
+				const int32 EndX = FMath::Min(BeginX + TileWidth, Width);
+				const int32 EndY = FMath::Min(BeginY + TileHeight, Height);
+				if (BeginX >= EndX || BeginY >= EndY)
+				{
+					continue;
+				}
+
+				TilePixels.Reset();
+				int32 TileNonZero = 0;
+				for (int32 Y = BeginY; Y < EndY; Y++)
+				{
+					const FColor* Row = &Pixels[Y * Width + BeginX];
+					TilePixels.Append(Row, EndX - BeginX);
+					for (int32 X = 0; X < EndX - BeginX; X++)
+					{
+						TileNonZero += Row[X].DWColor() != 0 ? 1 : 0;
+					}
+				}
+				if (TileNonZero == 0)
+				{
+					continue;
+				}
+
+				TSharedRef<FJsonObject> Tile = MakeShared<FJsonObject>();
+				Tile->SetNumberField(TEXT("x"), TileX);
+				Tile->SetNumberField(TEXT("y"), TileY);
+				Tile->SetStringField(TEXT("hash"), FString::Printf(TEXT("%016llx"),
+					CityHash64(reinterpret_cast<const char*>(TilePixels.GetData()), TilePixels.Num() * sizeof(FColor))));
+				Tile->SetNumberField(TEXT("nonzero_pixels"), TileNonZero);
+				TileValues.Add(MakeShared<FJsonValueObject>(Tile));
+			}
+		}
+		Data.SetNumberField(TEXT("tiles"), Tiles);
+		Data.SetNumberField(TEXT("tile_width"), TileWidth);
+		Data.SetNumberField(TEXT("tile_height"), TileHeight);
+		Data.SetArrayField(TEXT("nonempty_tiles"), TileValues);
+	}
+
+	// The pixels themselves, of all of it or of a part: [x0, y0, x1, y1]
+	FString DumpName;
+	if (Args.TryGetStringField(TEXT("dump"), DumpName) && !DumpName.IsEmpty())
+	{
+		int32 BeginX = 0, BeginY = 0, EndX = Width, EndY = Height;
+		const TArray<TSharedPtr<FJsonValue>>* Region = nullptr;
+		if (Args.TryGetArrayField(TEXT("region"), Region) && Region->Num() == 4)
+		{
+			BeginX = FMath::Clamp(static_cast<int32>((*Region)[0]->AsNumber()), 0, Width);
+			BeginY = FMath::Clamp(static_cast<int32>((*Region)[1]->AsNumber()), 0, Height);
+			EndX = FMath::Clamp(static_cast<int32>((*Region)[2]->AsNumber()), BeginX, Width);
+			EndY = FMath::Clamp(static_cast<int32>((*Region)[3]->AsNumber()), BeginY, Height);
+		}
+
+		if (BeginX < EndX && BeginY < EndY)
+		{
+			TArray<FColor> RegionPixels;
+			RegionPixels.Reserve((EndX - BeginX) * (EndY - BeginY));
+			for (int32 Y = BeginY; Y < EndY; Y++)
+			{
+				RegionPixels.Append(&Pixels[Y * Width + BeginX], EndX - BeginX);
+			}
+
+			const FString File = FString::Printf(TEXT("dumps/%s.png"), *FPaths::MakeValidFileName(DumpName));
+			const FString Path = FPaths::Combine(Directory, File);
+			TArray64<uint8> Png;
+			FImageUtils::PNGCompressImageArray(EndX - BeginX, EndY - BeginY,
+				TArrayView64<const FColor>{ RegionPixels.GetData(), RegionPixels.Num() }, Png);
+			const bool bSaved = FFileHelper::SaveArrayToFile(Png, *Path);
+
+			Data.SetStringField(TEXT("dump_file"), File);
+			Data.SetBoolField(TEXT("dump_saved"), bSaved);
+			Data.SetArrayField(TEXT("dump_region"), {
+				MakeShared<FJsonValueNumber>(BeginX), MakeShared<FJsonValueNumber>(BeginY),
+				MakeShared<FJsonValueNumber>(EndX), MakeShared<FJsonValueNumber>(EndY) });
+		}
+	}
+
+	MutableThis->AddEvent(TEXT("rt_hash_end"));
+
+	Data.SetNumberField(TEXT("width"), Width);
+	Data.SetNumberField(TEXT("height"), Height);
 	Data.SetStringField(TEXT("hash"), FString::Printf(TEXT("%016llx"), Hash));
 	Data.SetNumberField(TEXT("nonzero_pixels"), static_cast<double>(NonZero));
 	Data.SetNumberField(TEXT("duration"), FPlatformTime::Seconds() - Begin);
