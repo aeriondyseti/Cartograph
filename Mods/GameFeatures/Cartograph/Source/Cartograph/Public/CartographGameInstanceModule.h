@@ -296,6 +296,11 @@ private:
 
 	void OnCoroutineFinishedOrCancelled();
 
+	// The map can be closed in ways that don't go through what the blueprint hook is on (the map key for one),
+	// so the widget itself is listened to as well
+	void OnMapWidgetDestructed(UUserWidget* Widget);
+	void OnMapWidgetVisibilityChanged(ESlateVisibility Visibility);
+
 	void ExecuteRedrawMapCoroutine(bool bRedrawEntirely);
 
 	void UpdateZFilter();
@@ -479,6 +484,9 @@ protected:
 	// True while the player is viewing the map. Gates GPU drawing and render-target allocation so the
 	// render target only consumes VRAM while the map is actually on screen.
 	bool bMapVisible = false;
+
+	// The map widget that's being listened to for it going away
+	TWeakObjectPtr<UUserWidget> ShownMapWidget;
 
 	// True whenever the render target's contents can't be trusted: never drawn for this world, its GPU
 	// resource was released or reallocated, or building changes were only applied CPU-side. Only a

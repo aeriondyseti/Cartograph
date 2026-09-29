@@ -1313,6 +1313,20 @@ void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Wid
 {
 	SetMapVisible(true);
 
+	if (ShownMapWidget != Widget)
+	{
+		if (UUserWidget* PreviousWidget = ShownMapWidget.Get())
+		{
+			PreviousWidget->OnNativeDestruct.RemoveAll(this);
+			PreviousWidget->OnNativeVisibilityChanged.RemoveAll(this);
+		}
+
+		UUserWidget* MapWidget = const_cast<UUserWidget*>(Widget);
+		MapWidget->OnNativeDestruct.AddUObject(this, &UCartographGameInstanceModule::OnMapWidgetDestructed);
+		MapWidget->OnNativeVisibilityChanged.AddUObject(this, &UCartographGameInstanceModule::OnMapWidgetVisibilityChanged);
+		ShownMapWidget = MapWidget;
+	}
+
 	UWidget* Menu = Widget->WidgetTree->FindWidget("CartographMenu");
 	CARTO_LOG_ERROR_RETURN_IF_NULL(Menu);
 	Menu->SetVisibility(ESlateVisibility::Collapsed);
@@ -1332,6 +1346,36 @@ void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Wid
 void UCartographGameInstanceModule::OnVanillaMapMenuHidden()
 {
 	SetMapVisible(false);
+}
+
+
+void UCartographGameInstanceModule::OnMapWidgetDestructed(UUserWidget* Widget)
+{
+	if (Widget != ShownMapWidget)
+	{
+		return;
+	}
+
+	Widget->OnNativeDestruct.RemoveAll(this);
+	Widget->OnNativeVisibilityChanged.RemoveAll(this);
+	ShownMapWidget.Reset();
+
+	if (bMapVisible)
+	{
+		CARTO_LOG_DEBUG("Map widget destructed");
+		SetMapVisible(false);
+	}
+}
+
+
+void UCartographGameInstanceModule::OnMapWidgetVisibilityChanged(ESlateVisibility Visibility)
+{
+	const bool bIsShown = Visibility != ESlateVisibility::Collapsed && Visibility != ESlateVisibility::Hidden;
+	if (bIsShown != bMapVisible)
+	{
+		CARTO_LOG_DEBUG("Map widget visibility changed: %d", bIsShown);
+		SetMapVisible(bIsShown);
+	}
 }
 
 
