@@ -1383,10 +1383,7 @@ TArray<FString> UCartographGameInstanceModule::GetLayerCategoryOptions() const
 
 void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Widget)
 {
-	// Map shown again: bring the render target back (it may have been freed on close) and repaint it.
-	bMapVisible = true;
-	EnsureRenderTargetReady();
-	RedrawMap(true);
+	SetMapVisible(true);
 
 	UWidget* Menu = Widget->WidgetTree->FindWidget("CartographMenu");
 	CARTO_LOG_ERROR_RETURN_IF_NULL(Menu);
@@ -1406,17 +1403,154 @@ void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Wid
 
 void UCartographGameInstanceModule::OnVanillaMapMenuHidden()
 {
-	// Map closed: free the render target's VRAM (deferred until any in-flight redraw finishes).
-	bMapVisible = false;
+	SetMapVisible(false);
+}
 
-	if (bFreeRenderTargetWhenClosed)
+
+void UCartographGameInstanceModule::SetMapVisible(bool bVisible)
+{
+	bMapVisible = bVisible;
+
+	if (bVisible)
 	{
+		// Map shown again: bring the render target back (it may have been freed on close) and repaint it.
+		EnsureRenderTargetReady();
+		RedrawMap(true);
+	}
+	else if (bFreeRenderTargetWhenClosed)
+	{
+		// Map closed: free the render target's VRAM (deferred until any in-flight redraw finishes).
 		if (Coroutine.IsDone())
 		{
 			ReleaseRenderTargetResource();
 		}
 		// else: OnCoroutineFinishedOrCancelled releases it once the current draw completes.
 	}
+}
+
+
+UCanvasRenderTarget2D* UCartographGameInstanceModule::GetRenderTarget() const
+{
+	return RenderTarget;
+}
+
+
+void UCartographGameInstanceModule::RequestEntireRedraw()
+{
+	RedrawMap(true);
+}
+
+
+FCartographDebugState UCartographGameInstanceModule::GetDebugState(bool bCountDrawnBuildings) const
+{
+	FCartographDebugState State;
+	State.bIsInitializing = IsInitializing;
+	State.InitializeProgress = InitializeProgress;
+
+	State.bIsRedrawActive = !IsInitializing && !Coroutine.IsDone();
+	State.bIsRedrawingEntirely = IsRedrawingEntirely;
+	State.bIsPendingRedraw = IsPendingRedraw;
+	State.bIsPendingRedrawEntire = IsPendingRedrawEntire;
+	State.PendingAddCount = PendingAddBuildingData.Num();
+	State.PendingRemoveCount = PendingRemoveBuildingData.Num();
+
+	State.BuildingCount = CurrentBuildingData.Num();
+	State.DrawnBuildingCount = -1;
+	if (bCountDrawnBuildings)
+	{
+		State.DrawnBuildingCount = 0;
+		for (const FBuildingData& BuildingData : CurrentBuildingData)
+		{
+			State.DrawnBuildingCount += BuildingData.VisualBoxCache.bIsValid ? 1 : 0;
+		}
+	}
+	State.IndexRedirectorCount = BuildingDataIndexRedirector.Num();
+
+	State.bIsClient = IsClient;
+	State.bIsMapVisible = bMapVisible;
+
+	State.bFreeRenderTargetWhenClosed = bFreeRenderTargetWhenClosed;
+	State.bGenerateMips = bGenerateMips;
+	State.ConfiguredRenderTextureSize = GRenderTextureSize;
+
+	if (RenderTarget)
+	{
+		State.bHasRenderTarget = true;
+		State.bHasRenderTargetResource = RenderTarget->GetResource() != nullptr;
+		State.bRenderTargetAutoGeneratesMips = RenderTarget->bAutoGenerateMips;
+		State.RenderTargetSizeX = RenderTarget->SizeX;
+		State.RenderTargetSizeY = RenderTarget->SizeY;
+	}
+	return State;
+}
+
+
+int32 UCartographGameInstanceModule::VerifyBuildingIndices(TArray<FString>& OutErrors) const
+{
+	constexpr int32 MaxDescribedErrors = 20;
+	int32 ErrorCount = 0;
+	const auto AddError = [&OutErrors, &ErrorCount](FString&& Error)
+		{
+			if (++ErrorCount <= MaxDescribedErrors)
+			{
+				OutErrors.Add(MoveTemp(Error));
+			}
+		};
+
+	const int32 BuildingNum = CurrentBuildingData.Num();
+	for (int32 i = 1; i < BuildingNum; i++)
+	{
+		if (CurrentBuildingData[i] < CurrentBuildingData[i - 1])
+		{
+			AddError(FString::Printf(TEXT("Building data %d is sorted before %d"), i, i - 1));
+		}
+	}
+
+	TBitArray<> IsReferenced{ false, BuildingNum };
+	TArray<int32> Elements;
+	const int32 RedirectorNum = BuildingDataIndexRedirector.Num();
+	for (int32 i = 0; i < RedirectorNum; i++)
+	{
+		const int32 Index = BuildingDataIndexRedirector[i];
+		if (Index == -1)  // Removed
+		{
+			continue;
+		}
+		if (!CurrentBuildingData.IsValidIndex(Index))
+		{
+			AddError(FString::Printf(TEXT("Redirector %d points to %d, out of %d"), i, Index, BuildingNum));
+			continue;
+		}
+		if (IsReferenced[Index])
+		{
+			AddError(FString::Printf(TEXT("Redirector %d points to %d, which another one points to as well"), i, Index));
+		}
+		IsReferenced[Index] = true;
+
+		const FBox2D& VisualBox = CurrentBuildingData[Index].VisualBoxCache;
+		if (!VisualBox.bIsValid)
+		{
+			AddError(FString::Printf(TEXT("Redirector %d points to %d, which isn't drawn"), i, Index));
+			continue;
+		}
+
+		Elements.Reset();
+		CurrentBuildingQuadTree.GetElements(VisualBox, Elements);
+		if (!Elements.Contains(i))
+		{
+			AddError(FString::Printf(TEXT("Quad tree element %d isn't where building data %d is"), i, Index));
+		}
+	}
+
+	for (int32 i = 0; i < BuildingNum; i++)
+	{
+		if (CurrentBuildingData[i].VisualBoxCache.bIsValid && !IsReferenced[i])
+		{
+			AddError(FString::Printf(TEXT("Building data %d is drawn, but no redirector points to it"), i));
+		}
+	}
+
+	return ErrorCount;
 }
 #pragma endregion
 

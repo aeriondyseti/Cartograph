@@ -210,6 +210,40 @@ struct FRuntimeConfig
 /**
  * 
  */
+/// A snapshot of the module's internal state, for tools and tests. Plain data, nothing in here is live.
+struct FCartographDebugState
+{
+	bool bIsInitializing = false;
+	float InitializeProgress = 0;
+
+	bool bIsRedrawActive = false;
+	bool bIsRedrawingEntirely = false;
+	bool bIsPendingRedraw = false;
+	bool bIsPendingRedrawEntire = false;
+	int32 PendingAddCount = 0;
+	int32 PendingRemoveCount = 0;
+
+	int32 BuildingCount = 0;
+	int32 DrawnBuildingCount = 0;
+	int32 IndexRedirectorCount = 0;
+
+	bool bIsClient = false;
+	bool bIsMapVisible = false;
+	bool bRenderTargetNeedsFullRedraw = false;
+	bool bIsWorldTornDown = false;
+
+	bool bFreeRenderTargetWhenClosed = false;
+	bool bGenerateMips = false;
+	int32 ConfiguredRenderTextureSize = 0;
+
+	bool bHasRenderTarget = false;
+	bool bHasRenderTargetResource = false;
+	bool bRenderTargetAutoGeneratesMips = false;
+	int32 RenderTargetSizeX = 0;
+	int32 RenderTargetSizeY = 0;
+};
+
+
 UCLASS(PrioritizeCategories=("Draw Data", "Layer Data", "UI", "Advanced", "Default", "Generated Data"))
 class CARTOGRAPH_API UCartographGameInstanceModule : public UGameInstanceModule
 {
@@ -230,6 +264,14 @@ public:
 	const FBuildLayerData* GetBuildLayerData(uint32 ClassHash);
 
 	bool DoesBuildingExist(uint32 ClassHash) const;
+
+	// For tools and tests. Test baseline only: the same interface as on the branch that's being tested,
+	// on top of the behaviour from before it.
+	FCartographDebugState GetDebugState(bool bCountDrawnBuildings = false) const;
+	UCanvasRenderTarget2D* GetRenderTarget() const;
+	int32 VerifyBuildingIndices(TArray<FString>& OutErrors) const;
+	void RequestEntireRedraw();
+	void SetMapVisible(bool bVisible);
 
 	template<typename T>
 	const T* GetDataByBuildableClass(const TMap<TSoftClassPtr<AFGBuildable>, T>& ClassMap, const TMap<TSoftClassPtr<UFGBuildCategory>, T>& CategoryMap, UClass* BuildableClass) const;
