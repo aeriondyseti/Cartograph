@@ -437,6 +437,15 @@ protected:
 	// render target only consumes VRAM while the map is actually on screen.
 	bool bMapVisible = false;
 
+	// True whenever the render target's contents can't be trusted: never drawn for this world, its GPU
+	// resource was released or reallocated, or building changes were only applied CPU-side. Only a
+	// full redraw that runs to completion clears it; a cancelled one leaves it set.
+	bool bRenderTargetNeedsFullRedraw = true;
+
+	// Set between world teardown and the next world load. The render target is released during that
+	// window even when it is configured to stay resident, so nothing is held at the main menu.
+	bool bWorldTornDown = false;
+
 	// Latched from the mod config at world load (see OnWorldLoaded).
 	// bGenerateMips: generate a mip chain for the render target (~+33% VRAM, but cleaner when zoomed out).
 	// bFreeRenderTargetWhenClosed: free the render target's VRAM whenever the map is closed.

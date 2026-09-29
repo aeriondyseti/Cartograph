@@ -296,6 +296,8 @@ void UCartographGameInstanceModule::OnWorldLoaded(UWorld* World)
 	// a stale 'true' from a world torn down with the map open would keep the target resident and
 	// repainting off-screen in the next world.
 	bMapVisible = false;
+	bWorldTornDown = false;
+	bRenderTargetNeedsFullRedraw = true;
 
 	// Latch the VRAM-related config for this world. The render resolution in particular must stay fixed
 	// while loaded, because building screen-positions are cached against it.
@@ -369,7 +371,16 @@ void UCartographGameInstanceModule::OnWorldTearDown(UWorld* World)
 	PendingRemoveBuildingData.Empty();
 	IsRedrawingEntirely = false;
 	RedrawArea = FBox2D{ ForceInit };
+	bRenderTargetNeedsFullRedraw = true;
+	bWorldTornDown = true;
 	Coroutine.Cancel();
+
+	// Don't hold the render target outside of a world, not even when it's configured to stay resident.
+	// With a draw still in flight, OnCoroutineFinishedOrCancelled releases it once the canvas has ended.
+	if (Coroutine.IsDone())
+	{
+		ReleaseRenderTargetResource();
+	}
 }
 
 
@@ -531,6 +542,11 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 	// Not on scope exit: a cancelled redraw has to hand its area over to the next one
 	const auto ResetRedrawArea = [this]
 		{
+			// Only reached when the draw ran to completion, so an entire one leaves the contents complete
+			if (IsRedrawingEntirely)
+			{
+				bRenderTargetNeedsFullRedraw = false;
+			}
 			IsRedrawingEntirely = false;
 			RedrawArea = FBox2D{ ForceInit };
 		};
@@ -594,9 +610,10 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 		co_return;
 	}
 
-	// The CPU-side building data (and Z-filter bounds) is now up to date. If the map isn't being viewed,
-	// stop here: skip all GPU work and keep the render target deallocated until the player opens the map.
-	if (!bMapVisible)
+	// The CPU-side building data (and Z-filter bounds) is now up to date. If the render target is freed
+	// while the map is closed, stop here: skip all GPU work and keep it deallocated until the player opens
+	// the map. A resident render target keeps being drawn to instead, so the map is current when opened.
+	if (bWorldTornDown || (bFreeRenderTargetWhenClosed && !bMapVisible))
 	{
 		// Keep exit state consistent with the coroutine's other early-returns (see below): clear the
 		// accumulated partial-redraw region so a stale RedrawArea can't drive a partial draw into the
@@ -604,6 +621,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 		IsRedrawingEntirely = false;
 		RedrawArea = {};
 		RedrawArea.bIsValid = false;
+		bRenderTargetNeedsFullRedraw = true;
 		co_return;
 	}
 
@@ -611,6 +629,12 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 	if (!RenderTarget || !RenderTarget->GetResource())
 	{
 		co_return;
+	}
+
+	// A partial redraw is only correct on top of contents that are already complete
+	if (bRenderTargetNeedsFullRedraw)
+	{
+		IsRedrawingEntirely = true;
 	}
 
 	// Sometimes lines go crazy (goes to the top or far right) if we don't delay.
@@ -889,8 +913,9 @@ void UCartographGameInstanceModule::OnCoroutineFinishedOrCancelled()
 
 	if (!IsPendingRedraw)
 	{
-		// If the map was closed while this draw was still in flight, free the VRAM now that it's done.
-		if (bFreeRenderTargetWhenClosed && !bMapVisible)
+		// If the map was closed (or the world torn down) while this draw was still in flight,
+		// free the VRAM now that it's done.
+		if (bWorldTornDown || (bFreeRenderTargetWhenClosed && !bMapVisible))
 		{
 			ReleaseRenderTargetResource();
 		}
@@ -918,9 +943,11 @@ void UCartographGameInstanceModule::EnsureRenderTargetReady()
 	{
 		// Resize (also (re)allocates the GPU resource and clears to ClearColor).
 		RenderTarget->InitAutoFormat(GRenderTextureSize, GRenderTextureSize);
+		bRenderTargetNeedsFullRedraw = true;
 	}
 	else if (!RenderTarget->GetResource())
 	{
+		bRenderTargetNeedsFullRedraw = true;
 		// Right size, but the GPU resource was previously released (map was closed) — bring it back.
 		// NOTE: must be UpdateResource(), not UpdateResourceImmediate(): the latter early-outs when
 		// there is no existing resource (see UTextureRenderTarget2D::UpdateResourceImmediate), so it
@@ -939,6 +966,7 @@ void UCartographGameInstanceModule::ReleaseRenderTargetResource()
 	{
 		// Free the GPU/RHI allocation but keep the UObject so widget/material bindings remain valid.
 		RenderTarget->ReleaseResource();
+		bRenderTargetNeedsFullRedraw = true;
 	}
 }
 
@@ -1294,10 +1322,18 @@ TArray<FString> UCartographGameInstanceModule::GetLayerCategoryOptions() const
 
 void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Widget)
 {
-	// Map shown again: bring the render target back (it may have been freed on close) and repaint it.
+	// Map shown again: bring the render target back (it may have been freed on close). It only needs a
+	// repaint when its contents are stale, and not when an entire redraw is already on its way: reopening
+	// the map while one is running must not restart it.
 	bMapVisible = true;
 	EnsureRenderTargetReady();
-	RedrawMap(true);
+
+	const bool bEntireRedrawActive = !Coroutine.IsDone() && IsRedrawingEntirely;
+	const bool bEntireRedrawPending = IsPendingRedraw && IsPendingRedrawEntire;
+	if (bRenderTargetNeedsFullRedraw && !bEntireRedrawActive && !bEntireRedrawPending)
+	{
+		RedrawMap(true);
+	}
 
 	UWidget* Menu = Widget->WidgetTree->FindWidget("CartographMenu");
 	CARTO_LOG_ERROR_RETURN_IF_NULL(Menu);
