@@ -258,6 +258,7 @@ void UCartographGameInstanceModule::OnWorldLoaded(UWorld* World)
 	bMapVisible = false;
 	bWorldTornDown = false;
 	bRenderTargetNeedsFullRedraw = true;
+	bRedrawCancelRequested = false;
 
 	// Latch the VRAM-related config for this world. The render resolution in particular must stay fixed
 	// while loaded, because building screen-positions are cached against it.
@@ -390,6 +391,7 @@ void UCartographGameInstanceModule::RedrawMap(bool bRedrawEntirely)
 		{
 			CARTO_LOG_DEBUG("RedrawMapCoroutine Cancel Requested");
 			Coroutine.Cancel();
+			bRedrawCancelRequested = true;
 		}
 		// Don't let a later partial redraw request drop a pending entire one
         IsPendingRedrawEntire |= bRedrawEntirely;
@@ -1035,6 +1037,7 @@ void UCartographGameInstanceModule::ReleaseRenderTargetResource()
 
 void UCartographGameInstanceModule::ExecuteRedrawMapCoroutine(bool bRedrawEntirely)
 {
+	bRedrawCancelRequested = false;
 	Coroutine = RedrawMapCoroutine(PendingAddBuildingData, PendingRemoveBuildingData, bRedrawEntirely);
 	if (!IsClient)
 	{
@@ -1464,7 +1467,9 @@ void UCartographGameInstanceModule::SetMapVisible(bool bVisible)
 		// the map while one is running must not restart it.
 		EnsureRenderTargetReady();
 
-		const bool bEntireRedrawActive = !Coroutine.IsDone() && IsRedrawingEntirely;
+		// One that has been asked to stop doesn't count, it's still there but won't get anywhere.
+		// That's the map being closed and opened again before the redraw has come to stopping.
+		const bool bEntireRedrawActive = !Coroutine.IsDone() && IsRedrawingEntirely && !bRedrawCancelRequested;
 		const bool bEntireRedrawPending = IsPendingRedraw && IsPendingRedrawEntire;
 		if (bRenderTargetNeedsFullRedraw && !bEntireRedrawActive && !bEntireRedrawPending)
 		{
@@ -1473,12 +1478,27 @@ void UCartographGameInstanceModule::SetMapVisible(bool bVisible)
 	}
 	else if (bFreeRenderTargetWhenClosed)
 	{
-		// Map closed: free the render target's VRAM (deferred until any in-flight redraw finishes).
-		if (Coroutine.IsDone())
+		// Map closed: what's being drawn is going to be thrown away with the render target, so there's no
+		// point in going on with it. The changes to the building data it has taken are safe, it only stops
+		// after having applied them, and the ones that are pending are taken by the redraw after it.
+		// Not the initial gather, that isn't a redraw and has to be done whether the map is looked at or not.
+		if (!IsInitializing && !Coroutine.IsDone())
+		{
+			CARTO_LOG_DEBUG("Map closed, redraw cancel requested");
+
+			// Right away, and not only once the render target is released: the map can be opened again
+			// before that, and what a redraw of a part has left behind when stopped isn't complete either
+			bRenderTargetNeedsFullRedraw = true;
+			Coroutine.Cancel();
+			bRedrawCancelRequested = true;
+		}
+
+		// Free the render target's VRAM. With a canvas still open on it,
+		// OnCoroutineFinishedOrCancelled does so once that has ended.
+		if (!IsMapDrawOpen())
 		{
 			ReleaseRenderTargetResource();
 		}
-		// else: OnCoroutineFinishedOrCancelled releases it once the current draw completes.
 	}
 }
 

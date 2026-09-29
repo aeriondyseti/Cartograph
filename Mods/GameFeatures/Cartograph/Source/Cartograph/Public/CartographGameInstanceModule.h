@@ -491,6 +491,8 @@ protected:
 	TArray<FBuildingData> PendingRemoveBuildingData;
 
 	bool IsRedrawingEntirely = false;
+	// The redraw that's running has been asked to stop, which it only does once it gets to it
+	bool bRedrawCancelRequested = false;
 	FBox2D RedrawArea;
 
     bool IsClient = false;
