@@ -183,6 +183,11 @@ private:
 
 	uint64 WorldBeginPlayCount = 0;
 
+	/// A save that has been asked to be loaded, and how many worlds had begun play by then.
+	/// The one to wait for is one that has begun after.
+	FString PendingLoadSave;
+	TOptional<uint64> PendingLoadGeneration;
+
 	/// What the game has called back with for the command that's waiting for it
 	TOptional<TPair<bool, FString>> CallbackResult;
 };

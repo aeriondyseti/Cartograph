@@ -11,12 +11,15 @@
 #include "Engine/World.h"
 #include "FGBlueprintFunctionLibrary.h"
 #include "FGBuildableSubsystem.h"
+#include "FGCharacterPlayer.h"
 #include "FGDismantleInterface.h"
 #include "FGGameMode.h"
 #include "FGLightweightBuildableSubsystem.h"
 #include "FGPlayerController.h"
 #include "FGRecipe.h"
+#include "FGSaveManagerInterface.h"
 #include "FGSaveSession.h"
+#include "FGSaveSystem.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformMemory.h"
 #include "Engine/Canvas.h"
@@ -43,7 +46,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.4.0");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.5.1");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
 	constexpr double PollInterval = 0.1;
@@ -91,7 +94,7 @@ namespace
 		return Command == TEXT("build") || Command == TEXT("dismantle") || Command == TEXT("save")
 			|| Command == TEXT("load_save") || Command == TEXT("exit_to_menu")
 			|| Command == TEXT("machine_setup") || Command == TEXT("adopt")
-			|| Command == TEXT("set_layer") || Command == TEXT("set_z_filter") || Command == TEXT("set_view");
+			|| Command == TEXT("set_layer") || Command == TEXT("set_z_filter") || Command == TEXT("set_view") || Command == TEXT("teleport");
 	}
 
 	double Percentile(const TArray<double>& Sorted, double Fraction)
@@ -707,6 +710,42 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 			OutError = TEXT("name is required");
 			return ECommandStatus::Failed;
 		}
+		// "manager" is what the load menu does, which is what takes the player to where the game was saved.
+		// Travelling to the map with the save as an option starts the player at the hub.
+		FString Method = TEXT("manager");
+		Args.TryGetStringField(TEXT("method"), Method);
+		Data.SetStringField(TEXT("method"), Method);
+		Data.SetStringField(TEXT("requested_save"), SaveName);
+		Data.SetNumberField(TEXT("world_generation_at_request"), static_cast<double>(WorldBeginPlayCount));
+
+		// The load goes on after this, the world that's there now is not the one to wait for
+		PendingLoadSave = SaveName;
+		PendingLoadGeneration = WorldBeginPlayCount;
+		if (Method == TEXT("manager"))
+		{
+			UFGSaveSystem* SaveSystem = UFGSaveSystem::Get(World);
+			APlayerController* PlayerController = World->GetFirstPlayerController();
+			if (!SaveSystem || !PlayerController)
+			{
+				OutError = TEXT("There is no save system or no player controller");
+				return ECommandStatus::Failed;
+			}
+			FSaveHeader Header;
+			if (!SaveSystem->LoadSaveGameHeaderSync(SaveName, Header))
+			{
+				OutError = FString::Printf(TEXT("Can't read the header of the save %s"), *SaveName);
+				return ECommandStatus::Failed;
+			}
+			Data.SetStringField(TEXT("session"), Header.SessionName);
+			Data.SetStringField(TEXT("map"), Header.MapName);
+			if (!SaveSystem->LoadSaveFile(Header, FLoadSaveFileParameters{}, PlayerController))
+			{
+				OutError = TEXT("The save system didn't start loading the save");
+				return ECommandStatus::Failed;
+			}
+			return ECommandStatus::Succeeded;
+		}
+
 		FString Map = DefaultMap;
 		Args.TryGetStringField(TEXT("map"), Map);
 		FString Options = FString::Printf(TEXT("skipOnboarding?loadgame=%s"), *SaveName);
@@ -791,6 +830,28 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 	{
 		return ContinueDismantle(Command, OutError);
 	}
+	if (Name == TEXT("teleport"))
+	{
+		const APlayerController* PlayerController = World->GetFirstPlayerController();
+		APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+		FVector Location;
+		if (!Pawn || !ReadVector(Args, TEXT("location"), Location))
+		{
+			OutError = TEXT("There is no player, or no location: [x, y, z]");
+			return ECommandStatus::Failed;
+		}
+		const bool bTeleported = Pawn->TeleportTo(Location, Pawn->GetActorRotation(), false, true);
+		const FVector Now = Pawn->GetActorLocation();
+		Data.SetBoolField(TEXT("teleported"), bTeleported);
+		Data.SetArrayField(TEXT("player_location"), {
+			MakeShared<FJsonValueNumber>(Now.X), MakeShared<FJsonValueNumber>(Now.Y), MakeShared<FJsonValueNumber>(Now.Z) });
+		if (!bTeleported)
+		{
+			OutError = TEXT("The player couldn't be put there");
+			return ECommandStatus::Failed;
+		}
+		return ECommandStatus::Succeeded;
+	}
 	if (Name == TEXT("view") || Name == TEXT("set_view"))
 	{
 		APlayerController* PlayerController = World->GetFirstPlayerController();
@@ -820,6 +881,31 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 		{
 			Data.SetArrayField(TEXT("player_location"), ToJson(Pawn->GetActorLocation()));
 			Data.SetStringField(TEXT("player_class"), Pawn->GetClass()->GetName());
+
+			// To tell the player of the save from one that has been started anew
+			Data.SetStringField(TEXT("player_pawn_name"), Pawn->GetName());
+			Data.SetStringField(TEXT("player_movement_base"),
+				GetNameSafe(APawn::GetMovementBaseActor(Pawn)));
+			const AFGCharacterPlayer* Character = Cast<AFGCharacterPlayer>(Pawn);
+			if (const UFGInventoryComponent* Inventory = Character ? Character->GetInventory() : nullptr)
+			{
+				TArray<FInventoryStack> Stacks;
+				Inventory->GetInventoryStacks(Stacks);
+				int32 Items = 0;
+				for (const FInventoryStack& Stack : Stacks)
+				{
+					Items += Stack.NumItems;
+				}
+				Data.SetNumberField(TEXT("inventory_slots"), Inventory->GetSizeLinear());
+				Data.SetNumberField(TEXT("inventory_used_slots"), Stacks.Num());
+				Data.SetNumberField(TEXT("inventory_items"), Items);
+			}
+			else
+			{
+				Data.SetField(TEXT("inventory_slots"), NullValue());
+				Data.SetField(TEXT("inventory_used_slots"), NullValue());
+				Data.SetField(TEXT("inventory_items"), NullValue());
+			}
 		}
 		else
 		{
@@ -1072,10 +1158,22 @@ FCartographBridge::ECommandStatus FCartographBridge::Continue(FBridgeCommand& Co
 		const UWorld* World = GetGameWorld();
 		const AFGGameMode* GameMode = World ? World->GetAuthGameMode<AFGGameMode>() : nullptr;
 		const APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
-		if (World && World->HasBegunPlay() && GameMode && !GameMode->IsMainMenuGameMode()
+		const bool bIsNewerWorld = !PendingLoadGeneration.IsSet() || WorldBeginPlayCount > *PendingLoadGeneration;
+		if (bIsNewerWorld && World && World->HasBegunPlay() && GameMode && !GameMode->IsMainMenuGameMode()
 			&& PlayerController && PlayerController->GetPawn())
 		{
 			Command.Data->SetStringField(TEXT("world"), World->GetName());
+			Command.Data->SetNumberField(TEXT("world_generation"), static_cast<double>(WorldBeginPlayCount));
+			if (PendingLoadGeneration.IsSet())
+			{
+				Command.Data->SetStringField(TEXT("requested_save"), PendingLoadSave);
+			}
+			else
+			{
+				Command.Data->SetField(TEXT("requested_save"), NullValue());
+			}
+			PendingLoadGeneration.Reset();
+			PendingLoadSave.Reset();
 			return ECommandStatus::Succeeded;
 		}
 	}
