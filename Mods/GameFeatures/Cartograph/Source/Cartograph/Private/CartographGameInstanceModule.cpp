@@ -16,6 +16,7 @@
 #include "Components/HorizontalBoxSlot.h"
 #include "Misc/OutputDeviceNull.h"
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"
+#include "GlobalRenderResources.h"
 
 #include "FGLightweightBuildableSubsystem.h"
 #include "Buildables/FGBuildable.h"
@@ -45,20 +46,52 @@
 DEFINE_LOG_CATEGORY(LogCartograph);
 
 
-template<IsFVector T, IsFVector U>
-void draw_line(UCanvas* Canvas, const T& WorldStart, const U& WorldEnd, const FLinearColor& Color, float Thickness)
+// The vertices FCanvasTileItem makes, but rotated here instead of through the canvas transform,
+// so that tiles with different rotations can share a batch
+static void draw_tile(FBatchedElements& Batch, const FTexture* Texture, const FVector2D& Position, const FVector2D& Size, const FRotator& Rotation, const FLinearColor& Color)
 {
-    const FVector2D StartScreenPosition = world_position_to_screen_position(WorldStart, FVector::ZeroVector);
-    const FVector2D EndScreenPosition = world_position_to_screen_position(WorldEnd, FVector::ZeroVector);
-	FCanvasLineItem LineItem{
-		StartScreenPosition,
-		EndScreenPosition
-	};
-	LineItem.LineThickness = Thickness;
-	LineItem.SetColor(Color);
-	// Only opaque lines are supported
-	// LineItem.BlendMode = FCanvas::BlendToSimpleElementBlend
-	Canvas->DrawItem(LineItem);
+	const FVector Pivot{ Position + Size / 2, 0 };
+	const FMatrix Transform = FTranslationMatrix{ -Pivot } * FRotationMatrix{ Rotation } * FTranslationMatrix{ Pivot };
+	const auto AddVertex = [&](double X, double Y, float U, float V)
+		{
+			const FVector P = Transform.TransformPosition(FVector{ X, Y, 0 });
+			return Batch.AddVertexf(FVector4f{ float(P.X), float(P.Y), float(P.Z), 1 }, FVector2f{ U, V }, Color, FHitProxyId{});
+		};
+
+	const int32 V00 = AddVertex(Position.X, Position.Y, 0, 0);
+	const int32 V10 = AddVertex(Position.X + Size.X, Position.Y, 1, 0);
+	const int32 V01 = AddVertex(Position.X, Position.Y + Size.Y, 0, 1);
+	const int32 V11 = AddVertex(Position.X + Size.X, Position.Y + Size.Y, 1, 1);
+	Batch.AddTriangle(V00, V10, V11, Texture, SE_BLEND_AlphaBlend);
+	Batch.AddTriangle(V00, V11, V01, Texture, SE_BLEND_AlphaBlend);
+}
+
+
+// The shape FBatchedElements gives a thick line (a square as wide as the line, swept from start to end, see its Draw),
+// but made of triangles so it goes into the same batch as the tiles. Opaque, like FBatchedElements::AddLine makes every line.
+template<IsFVector T, IsFVector U>
+void draw_line(FBatchedElements& Batch, const T& WorldStart, const U& WorldEnd, FLinearColor Color, float Thickness)
+{
+	const FVector2D Start = world_position_to_screen_position(WorldStart, FVector::ZeroVector);
+	const FVector2D End = world_position_to_screen_position(WorldEnd, FVector::ZeroVector);
+	const double X = End.X >= Start.X ? Thickness / 2 : -Thickness / 2;
+	const double Y = End.Y <= Start.Y ? Thickness / 2 : -Thickness / 2;
+	Color.A = 1;
+	const auto AddVertex = [&](const FVector2D& Point, double OffsetX, double OffsetY)
+		{
+			return Batch.AddVertexf(FVector4f{ float(Point.X + OffsetX), float(Point.Y + OffsetY), 0, 1 }, FVector2f::ZeroVector, Color, FHitProxyId{});
+		};
+
+	const int32 S0 = AddVertex(Start, X, Y);
+	const int32 S2 = AddVertex(Start, -X, Y);
+	const int32 S3 = AddVertex(Start, -X, -Y);
+	const int32 E0 = AddVertex(End, X, Y);
+	const int32 E1 = AddVertex(End, X, -Y);
+	const int32 E3 = AddVertex(End, -X, -Y);
+	Batch.AddTriangle(S2, S0, E0, GWhiteTexture, SE_BLEND_AlphaBlend);
+	Batch.AddTriangle(S2, E1, E0, GWhiteTexture, SE_BLEND_AlphaBlend);
+	Batch.AddTriangle(S2, E3, E1, GWhiteTexture, SE_BLEND_AlphaBlend);
+	Batch.AddTriangle(S2, S3, E3, GWhiteTexture, SE_BLEND_AlphaBlend);
 }
 
 
@@ -503,6 +536,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 	};
 
 	CARTO_LOG_DEBUG("RedrawMapCoroutine Started. Entire: %d", bRedrawEntirely);
+	const double StartTime = FPlatformTime::Seconds();
 
 	const float TimeBudget = FCartograph_ConfigStruct::GetActiveConfig(GetWorld()).RedrawTimeBudget;
 	UE5Coro::Latent::FTickTimeBudget Budget = UE5Coro::Latent::FTickTimeBudget::Milliseconds(TimeBudget);
@@ -713,6 +747,14 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 		CARTO_LOG_DEBUG("Overlapping Elements: %d", BuildingsToDraw.Num());
 	}
 
+	// The canvas flushes after every DrawItem, so drawing item by item sent every tile and line to the GPU on its own,
+	// which took about a minute for the entire map on a big save. Tiles and lines are all triangles here, blended the same,
+	// so what a tick draws goes out in one pass. Only a texture change starts a new batch, that keeps the order by height.
+	const auto GetBatch = [this](const FTexture* Texture) -> FBatchedElements&
+		{
+			return *MapDrawCanvas->GetBatchedElements(FCanvas::ET_Triangle, nullptr, Texture, SE_BLEND_AlphaBlend);
+		};
+
 	for (int32 i : BuildingsToDraw)
 	{
         const auto& [ClassHash, Transform, BuildableExtraData,
@@ -757,23 +799,14 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 			const UTexture2D* LoadedTexture = Texture->Get();
 			if (!LoadedTexture)
 			{
+				MapDrawCanvas->Flush_GameThread();  // What's batched can't wait for the load, its textures aren't kept loaded
 				LoadedTexture = co_await UE5Coro::Latent::AsyncLoadObject(*Texture);
 			}
 			CARTO_LOG_ERROR_BREAK_IF_NULL(LoadedTexture);
+			const FTexture* Resource = LoadedTexture->GetResource();
+			CARTO_LOG_ERROR_BREAK_IF_NULL(Resource);
 
-			FCanvasTileItem TileItem{
-				ScreenPosition,
-				LoadedTexture->GetResource(),
-				{ Size.X * pixel_per_centimeter_x(), Size.Y * pixel_per_centimeter_y() },
-				{ 0, 0 },
-				{ 1, 1 },
-				FLinearColor::White
-			};
-			TileItem.PivotPoint = { 0.5, 0.5 };
-			TileItem.BlendMode = FCanvas::BlendToSimpleElementBlend(EBlendMode::BLEND_Translucent);
-			TileItem.Rotation = Rotation;
-
-			Canvas->DrawItem(TileItem);
+			draw_tile(GetBatch(Resource), Resource, ScreenPosition, { Size.X * pixel_per_centimeter_x(), Size.Y * pixel_per_centimeter_y() }, Rotation, FLinearColor::White);
 
 			break;
 		}
@@ -790,24 +823,14 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 			const auto& [CategoryData, Corners] = *RectangleDataCachePtr;
 			CARTO_LOG_ERROR_BREAK_IF_NULL(CategoryData);
 
-			FCanvasTileItem TileItem{
-				ScreenPosition,
-				{ Size.X * pixel_per_centimeter_x(), Size.Y * pixel_per_centimeter_y() },
-				CategoryData->MainColor
-			};
-			TileItem.PivotPoint = { 0.5, 0.5 };
-			TileItem.BlendMode = FCanvas::BlendToSimpleElementBlend(EBlendMode::BLEND_Translucent);
-			TileItem.Rotation = Rotation;
-
-			Canvas->DrawItem(TileItem);
-			co_await Budget;
+			FBatchedElements& Batch = GetBatch(GWhiteTexture);
+			draw_tile(Batch, GWhiteTexture, ScreenPosition, { Size.X * pixel_per_centimeter_x(), Size.Y * pixel_per_centimeter_y() }, Rotation, CategoryData->MainColor);
 
 			if (CategoryData->OutlineThickness > 0)
 			{
 				for (int32 k = 0; k < 4; k++)
 				{
-					draw_line(Canvas, Corners[k], Corners[(k + 1) % 4], CategoryData->OutlineColor, CategoryData->OutlineThickness);
-					co_await Budget;
+					draw_line(Batch, Corners[k], Corners[(k + 1) % 4], CategoryData->OutlineColor, CategoryData->OutlineThickness);
 				}
 			}
 
@@ -822,12 +845,12 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 			const FSplineExtraData* SplineExtraData = std::get_if<FSplineExtraData>(&BuildableExtraData);
             CARTO_LOG_ERROR_BREAK_IF_NULL(SplineExtraData);
 
+            FBatchedElements& Batch = GetBatch(GWhiteTexture);
             const int Num = SplineExtraData->Points.Num();
             for (int j = 0; j < Num - 1; j++)
             {
-                draw_line(Canvas, SplineExtraData->Points[j], SplineExtraData->Points[j + 1],
+                draw_line(Batch, SplineExtraData->Points[j], SplineExtraData->Points[j + 1],
 					SplineDataCachePtr->SplineData->Color, SplineDataCachePtr->SplineData->Thickness);
-                co_await Budget;
             }
 
 			break;
@@ -842,7 +865,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 			CARTO_LOG_ERROR_BREAK_IF_NULL(WireDataPtr);
             const FWireData* WireData = *WireDataPtr;
 
-			draw_line(Canvas, Transform.GetLocation(), WireExtraData->End, WireData->Color, WireData->Thickness);
+			draw_line(GetBatch(GWhiteTexture), Transform.GetLocation(), WireExtraData->End, WireData->Color, WireData->Thickness);
 
 			break;
 		}
@@ -859,7 +882,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 			const float Length = BeamExtraData->Length;
 			const FVector Start = Transform.GetLocation();
 			const FVector End = Start + Transform.GetRotation().Vector() * Length;
-			draw_line(Canvas, Start, End, BeamData->Color, BeamData->Thickness);
+			draw_line(GetBatch(GWhiteTexture), Start, End, BeamData->Color, BeamData->Thickness);
 
             break;
 		}
@@ -875,13 +898,23 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 
 			const FVector2D MinPoint = VisualBoxCache.Min;
             const FVector2D MaxPoint = VisualBoxCache.Max;
-            draw_line(Canvas, FVector2D{ MinPoint.X, MinPoint.Y }, FVector2D{ MaxPoint.X, MinPoint.Y }, Color, Thickness);
-			draw_line(Canvas, FVector2D{ MaxPoint.X, MinPoint.Y }, FVector2D{ MaxPoint.X, MaxPoint.Y }, Color, Thickness);
-			draw_line(Canvas, FVector2D{ MaxPoint.X, MaxPoint.Y }, FVector2D{ MinPoint.X, MaxPoint.Y }, Color, Thickness);
-			draw_line(Canvas, FVector2D{ MinPoint.X, MaxPoint.Y }, FVector2D{ MinPoint.X, MinPoint.Y }, Color, Thickness);
+			FBatchedElements& Batch = GetBatch(GWhiteTexture);
+            draw_line(Batch, FVector2D{ MinPoint.X, MinPoint.Y }, FVector2D{ MaxPoint.X, MinPoint.Y }, Color, Thickness);
+			draw_line(Batch, FVector2D{ MaxPoint.X, MinPoint.Y }, FVector2D{ MaxPoint.X, MaxPoint.Y }, Color, Thickness);
+			draw_line(Batch, FVector2D{ MaxPoint.X, MaxPoint.Y }, FVector2D{ MinPoint.X, MaxPoint.Y }, Color, Thickness);
+			draw_line(Batch, FVector2D{ MinPoint.X, MaxPoint.Y }, FVector2D{ MinPoint.X, MinPoint.Y }, Color, Thickness);
 		}
 
-		co_await Budget;
+		if (!Budget.await_ready())
+		{
+			MapDrawCanvas->Flush_GameThread();
+			co_await Budget;
+		}
+	}
+
+	if (IsRedrawingEntirely)
+	{
+		CARTO_LOG("Map drawn in %.2f s, %d buildings", FPlatformTime::Seconds() - StartTime, BuildingsToDraw.Num());
 	}
 
 	ResetRedrawArea();
