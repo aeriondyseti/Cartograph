@@ -38,7 +38,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.1.0");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.2.0");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
 	constexpr double PollInterval = 0.1;
@@ -439,9 +439,13 @@ bool FCartographBridge::Tick(float)
 
 	if (!Samplers.IsEmpty())
 	{
+		const UCartographGameInstanceModule* Cartograph = UCartographGameInstanceModule::Instance;
+		const FCartographDebugState State = Cartograph ? Cartograph->GetDebugState() : FCartographDebugState{};
 		const FBridgeSampleRow Row{
 			GFrameCounter, Time - StartTime, DeltaMs,
-			FPlatformTime::ToMilliseconds64(GGameThreadTime), FPlatformTime::ToMilliseconds64(GRenderThreadTime)
+			FPlatformTime::ToMilliseconds64(GGameThreadTime), FPlatformTime::ToMilliseconds64(GRenderThreadTime),
+			Cartograph != nullptr, State.bIsInitializing, State.bIsRedrawActive, State.bIsRedrawingEntirely,
+			State.bIsPendingRedraw, State.bIsPendingRedrawEntire, State.PendingAddCount, State.PendingRemoveCount
 		};
 		for (auto& [Name, Sampler] : Samplers)
 		{
@@ -1747,18 +1751,30 @@ void FCartographBridge::StopSampler(const FString& Name, FJsonObject& Data)
 			const bool bHasThreadTimes = Rows.ContainsByPredicate(
 				[](const FBridgeSampleRow& Row) { return Row.GameThreadMs > 0 || Row.RenderThreadMs > 0; });
 
-			FString Csv = TEXT("frame,t,delta_ms,game_thread_ms,render_thread_ms\n");
-			Csv.Reserve(Rows.Num() * 64);
+			FString Csv = TEXT("frame,t,delta_ms,game_thread_ms,render_thread_ms,is_initializing,is_redraw_active,")
+				TEXT("is_redrawing_entirely,is_pending_redraw,is_pending_redraw_entire,pending_add_count,pending_remove_count\n");
+			Csv.Reserve(Rows.Num() * 96);
 			for (const FBridgeSampleRow& Row : Rows)
 			{
 				if (bHasThreadTimes)
 				{
-					Csv += FString::Printf(TEXT("%llu,%.6f,%.4f,%.4f,%.4f\n"),
+					Csv += FString::Printf(TEXT("%llu,%.6f,%.4f,%.4f,%.4f"),
 						Row.Frame, Row.Time, Row.DeltaMs, Row.GameThreadMs, Row.RenderThreadMs);
 				}
 				else
 				{
-					Csv += FString::Printf(TEXT("%llu,%.6f,%.4f,,\n"), Row.Frame, Row.Time, Row.DeltaMs);
+					Csv += FString::Printf(TEXT("%llu,%.6f,%.4f,,"), Row.Frame, Row.Time, Row.DeltaMs);
+				}
+
+				if (Row.bHasCartographState)
+				{
+					Csv += FString::Printf(TEXT(",%d,%d,%d,%d,%d,%d,%d\n"),
+						Row.bIsInitializing, Row.bIsRedrawActive, Row.bIsRedrawingEntirely,
+						Row.bIsPendingRedraw, Row.bIsPendingRedrawEntire, Row.PendingAddCount, Row.PendingRemoveCount);
+				}
+				else
+				{
+					Csv += TEXT(",,,,,,,\n");
 				}
 			}
 			return Csv;

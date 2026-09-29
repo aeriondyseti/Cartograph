@@ -51,6 +51,16 @@ struct FBridgeSampleRow
 	double DeltaMs;
 	double GameThreadMs;
 	double RenderThreadMs;
+
+	// What Cartograph was doing that frame
+	bool bHasCartographState;
+	bool bIsInitializing;
+	bool bIsRedrawActive;
+	bool bIsRedrawingEntirely;
+	bool bIsPendingRedraw;
+	bool bIsPendingRedrawEntire;
+	int32 PendingAddCount;
+	int32 PendingRemoveCount;
 };
 
 struct FBridgeSampler
