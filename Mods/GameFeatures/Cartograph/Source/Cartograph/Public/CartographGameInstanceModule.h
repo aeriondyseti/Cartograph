@@ -216,7 +216,6 @@ class CARTOGRAPH_API UCartographGameInstanceModule : public UGameInstanceModule
 	GENERATED_BODY()
 
     friend class ACartographModSubsystem;
-	friend class FCartographCanvasRenderItem;
 	friend class UCartographRemoteCallObject;
 
 public:
@@ -412,7 +411,6 @@ protected:
 
 	UE5Coro::TCoroutine<> Coroutine = UE5Coro::TCoroutine<>::CompletedCoroutine;
 	FDrawToRenderTargetContext RenderContext;
-	FCanvas* CurrentCanvas = nullptr;
 	TArray<FBuildingData> CurrentBuildingData;
 
 	/// To get the building data from the quad tree,
@@ -429,7 +427,6 @@ protected:
 
 	bool IsRedrawingEntirely = false;
 	FBox2D RedrawArea;
-	std::array<uint32, 4> ScissorArea;
 
     bool IsClient = false;
 

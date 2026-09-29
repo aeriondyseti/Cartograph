@@ -30,7 +30,6 @@
 #include "Patching/BlueprintHookManager.h"
 #include "Patching/NativeHookManager.h"
 
-#include "Util/CartographCanvasRenderItem.h"
 #include "CartographModSubsystem.h"
 #include "CartographRemoteCallObject.h"
 #include "Cartograph_ConfigStruct.h"
@@ -237,49 +236,6 @@ void UCartographGameInstanceModule::DispatchLifecycleEvent(ELifecyclePhase Phase
 		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, InvalidateRuntimeInstanceDataForIndex, LambdaAfterInvalidateRuntimeInstanceDataForIndex);
 
 		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGBuildableSubsystem, RemoveBuildable, LambdaAfterRemoveBuildable);
-
-
-		SUBSCRIBE_METHOD(FCanvas::GetBatchedElements,
-			[](auto& Scope, FCanvas* ClassInstance,
-				FCanvas::EElementType InElementType, FBatchedElementParameters* InBatchedElementParameters, const FTexture* InTexture, ESimpleElementBlendMode InBlendMode, const FDepthFieldGlowInfo& GlowInfo, bool bApplyDPIScale)
-			{
-				// Only Cartograph's map canvas needs the custom render item (for the redraw scissor).
-				// Every other canvas must keep the engine implementation, otherwise its render data leaks VRAM.
-				if (!Instance || ClassInstance != Instance->CurrentCanvas)
-				{
-					Scope(ClassInstance, InElementType, InBatchedElementParameters, InTexture, InBlendMode, GlowInfo, bApplyDPIScale);
-					return;
-				}
-
-				// get sort element based on the current sort key from top of sort key stack
-				FCanvas::FCanvasSortElement& SortElement = ClassInstance->GetSortElement(ClassInstance->TopDepthSortKey());
-				// find a batch to use 
-				FCartographCanvasRenderItem* RenderBatch = nullptr;
-				// get the current transform entry from top of transform stack
-				FCanvas::FTransformEntry FinalTransform = ClassInstance->GetTransformStack().Top();
-
-				if (!bApplyDPIScale && ClassInstance->GetDPIScale() != 1.0f)
-				{
-					FinalTransform = FCanvas::FTransformEntry(FScaleMatrix(1 / ClassInstance->GetDPIScale()) * FinalTransform.GetMatrix());
-				}
-
-				// try to use the current top entry in the render batch array
-				if (SortElement.RenderBatchArray.Num() > 0)
-				{
-					checkSlow(SortElement.RenderBatchArray.Last());
-					RenderBatch = static_cast<FCartographCanvasRenderItem*>(SortElement.RenderBatchArray.Last());
-				}
-
-				// if a matching entry for this batch doesn't exist then allocate a new entry
-				if (RenderBatch == nullptr ||
-					!RenderBatch->IsMatch(InBatchedElementParameters, InTexture, InBlendMode, InElementType, FinalTransform, GlowInfo))
-				{
-					RenderBatch = new FCartographCanvasRenderItem(InBatchedElementParameters, InTexture, InBlendMode, InElementType, FinalTransform, GlowInfo);
-					SortElement.RenderBatchArray.Add(RenderBatch);
-				}
-
-				Scope.Override(RenderBatch->GetBatchedElements());
-			});
 	}
 #pragma endregion
 }
@@ -644,27 +600,33 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 	UCanvas* Canvas = nullptr;
 	FVector2D _;
 	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(this, RenderTarget, Canvas, _, RenderContext);
-	CurrentCanvas = Canvas->Canvas;
 
-	if (IsRedrawingEntirely)
-	{
-		ScissorArea = { 0, 0, static_cast<uint32>(GRenderTextureSize), static_cast<uint32>(GRenderTextureSize) };
-	}
-	else
+	// The canvas applies this to every pass it renders, so a partial redraw only touches its own area
+	FIntRect ScissorRect{ 0, 0, GRenderTextureSize, GRenderTextureSize };
+	if (!IsRedrawingEntirely)
 	{
 		const FVector2D MinScreenPosition = world_position_to_screen_position(RedrawArea.Min, FVector::ZeroVector);
         const FVector2D MaxScreenPosition = world_position_to_screen_position(RedrawArea.Max, FVector::ZeroVector);
-		const auto MinIntX = static_cast<uint32>(FMath::Max(0, FMath::FloorToInt(MinScreenPosition.X)));
-        const auto MinIntY = static_cast<uint32>(FMath::Max(0, FMath::FloorToInt(MinScreenPosition.Y)));
-        const auto MaxIntX = static_cast<uint32>(FMath::Min(GRenderTextureSize, FMath::CeilToInt(MaxScreenPosition.X)));
-        const auto MaxIntY = static_cast<uint32>(FMath::Min(GRenderTextureSize, FMath::CeilToInt(MaxScreenPosition.Y)));
-        ScissorArea = { MinIntX, MinIntY, MaxIntX, MaxIntY };
+		const int32 MinIntX = FMath::Clamp(FMath::FloorToInt(MinScreenPosition.X), 0, GRenderTextureSize);
+        const int32 MinIntY = FMath::Clamp(FMath::FloorToInt(MinScreenPosition.Y), 0, GRenderTextureSize);
+        const int32 MaxIntX = FMath::Clamp(FMath::CeilToInt(MaxScreenPosition.X), 0, GRenderTextureSize);
+        const int32 MaxIntY = FMath::Clamp(FMath::CeilToInt(MaxScreenPosition.Y), 0, GRenderTextureSize);
+		if (MinIntX >= MaxIntX || MinIntY >= MaxIntY)
+		{
+			// Nothing of the area is on the map. Must not go on: the canvas ignores an empty scissor rect,
+			// so the clear below would wipe the entire map.
+			ResetRedrawArea();
+			co_return;
+		}
+
+		ScissorRect = FIntRect{ MinIntX, MinIntY, MaxIntX, MaxIntY };
         RedrawArea = {
         	screen_position_to_world_position(FVector2D{ static_cast<double>(MinIntX), static_cast<double>(MinIntY) }),
 			screen_position_to_world_position(FVector2D{ static_cast<double>(MaxIntX), static_cast<double>(MaxIntY) })
         };
 		CARTO_LOG_DEBUG("RedrawArea: %s", *RedrawArea.ToString());
 	}
+	Canvas->Canvas->SetRenderTargetScissorRect(ScissorRect);
 
 	FCanvasTileItem ClearItem{
 		{ 0, 0 },
@@ -908,7 +870,6 @@ void UCartographGameInstanceModule::OnCoroutineFinishedOrCancelled()
 	{
         UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, RenderContext);
 		RenderContext = {};
-		CurrentCanvas = nullptr;
 	}
 
 	if (!IsPendingRedraw)
