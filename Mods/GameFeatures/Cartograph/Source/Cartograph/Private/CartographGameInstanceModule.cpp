@@ -1365,6 +1365,12 @@ void UCartographGameInstanceModule::SetMapVisible(bool bVisible)
 }
 
 
+UCanvasRenderTarget2D* UCartographGameInstanceModule::GetRenderTarget() const
+{
+	return RenderTarget;
+}
+
+
 void UCartographGameInstanceModule::RequestEntireRedraw()
 {
 	RedrawMap(true);

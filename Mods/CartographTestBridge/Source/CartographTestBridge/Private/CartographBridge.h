@@ -17,6 +17,8 @@ class FBridgeFileWriter
 public:
 	void Append(const FString& Path, FString&& Text);
 	void Overwrite(const FString& Path, FString&& Text);
+	/// For text that takes a while to put together, that's done off the game thread as well
+	void Overwrite(const FString& Path, TUniqueFunction<FString()>&& MakeText);
 	void Flush();
 
 private:
@@ -27,12 +29,18 @@ private:
 		bool bAppend;
 	};
 
-	void WritePending();
+	/// The tasks that write hold on to it, they can still be around when the writer isn't anymore
+	struct FState
+	{
+		FCriticalSection PendingMutex;
+		TArray<FPendingWrite> Pending;
 
-	FCriticalSection PendingMutex;
-	TArray<FPendingWrite> Pending;
+		FCriticalSection WriteMutex;
+	};
 
-	FCriticalSection WriteMutex;
+	static void WritePending(FState& State);
+
+	TSharedRef<FState, ESPMode::ThreadSafe> State = MakeShared<FState, ESPMode::ThreadSafe>();
 };
 
 

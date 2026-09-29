@@ -98,39 +98,53 @@ namespace
 void FBridgeFileWriter::Append(const FString& Path, FString&& Text)
 {
 	{
-		FScopeLock Lock{ &PendingMutex };
-		Pending.Add({ Path, MoveTemp(Text), true });
+		FScopeLock Lock{ &State->PendingMutex };
+		State->Pending.Add({ Path, MoveTemp(Text), true });
 	}
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this] { WritePending(); });
+	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [State = State] { WritePending(*State); });
 }
 
 
 void FBridgeFileWriter::Overwrite(const FString& Path, FString&& Text)
 {
 	{
-		FScopeLock Lock{ &PendingMutex };
-		Pending.Add({ Path, MoveTemp(Text), false });
+		FScopeLock Lock{ &State->PendingMutex };
+		State->Pending.Add({ Path, MoveTemp(Text), false });
 	}
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this] { WritePending(); });
+	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [State = State] { WritePending(*State); });
+}
+
+
+void FBridgeFileWriter::Overwrite(const FString& Path, TUniqueFunction<FString()>&& MakeText)
+{
+	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [State = State, Path, MakeText = MoveTemp(MakeText)]() mutable
+		{
+			FString Text = MakeText();
+			{
+				FScopeLock Lock{ &State->PendingMutex };
+				State->Pending.Add({ Path, MoveTemp(Text), false });
+			}
+			WritePending(*State);
+		});
 }
 
 
 void FBridgeFileWriter::Flush()
 {
-	WritePending();
+	WritePending(*State);
 }
 
 
-void FBridgeFileWriter::WritePending()
+void FBridgeFileWriter::WritePending(FState& State)
 {
 	// Taken before the pending ones are, that's what keeps the order
-	FScopeLock WriteLock{ &WriteMutex };
+	FScopeLock WriteLock{ &State.WriteMutex };
 
 	TArray<FPendingWrite> ToWrite;
 	{
-		FScopeLock Lock{ &PendingMutex };
-		ToWrite = MoveTemp(Pending);
-		Pending.Reset();
+		FScopeLock Lock{ &State.PendingMutex };
+		ToWrite = MoveTemp(State.Pending);
+		State.Pending.Reset();
 	}
 
 	for (const FPendingWrite& Write : ToWrite)
@@ -1285,17 +1299,27 @@ void FCartographBridge::StopSampler(const FString& Name, FJsonObject& Data)
 	AddEvent(TEXT("sample_stop"), Detail);
 
 	// Put together off the game thread as well, it's a line per frame
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
-		[this, Path = FPaths::Combine(Directory, File), Rows = MoveTemp(Sampler.Rows)]() mutable
+	Writer.Overwrite(FPaths::Combine(Directory, File), [Rows = MoveTemp(Sampler.Rows)]
 		{
+			// The thread times are only there when the engine keeps them, which shows as them never being anything
+			const bool bHasThreadTimes = Rows.ContainsByPredicate(
+				[](const FBridgeSampleRow& Row) { return Row.GameThreadMs > 0 || Row.RenderThreadMs > 0; });
+
 			FString Csv = TEXT("frame,t,delta_ms,game_thread_ms,render_thread_ms\n");
 			Csv.Reserve(Rows.Num() * 64);
 			for (const FBridgeSampleRow& Row : Rows)
 			{
-				Csv += FString::Printf(TEXT("%llu,%.6f,%.4f,%.4f,%.4f\n"),
-					Row.Frame, Row.Time, Row.DeltaMs, Row.GameThreadMs, Row.RenderThreadMs);
+				if (bHasThreadTimes)
+				{
+					Csv += FString::Printf(TEXT("%llu,%.6f,%.4f,%.4f,%.4f\n"),
+						Row.Frame, Row.Time, Row.DeltaMs, Row.GameThreadMs, Row.RenderThreadMs);
+				}
+				else
+				{
+					Csv += FString::Printf(TEXT("%llu,%.6f,%.4f,,\n"), Row.Frame, Row.Time, Row.DeltaMs);
+				}
 			}
-			Writer.Overwrite(Path, MoveTemp(Csv));
+			return Csv;
 		});
 }
 #pragma endregion
