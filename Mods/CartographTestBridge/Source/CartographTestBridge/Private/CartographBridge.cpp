@@ -60,7 +60,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.6.8");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.6.9");
 	constexpr const TCHAR* TestSavePrefix = TEXT("Cartograph_Test_");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
@@ -2436,6 +2436,34 @@ bool FCartographBridge::RunPowerCommand(UWorld& World, const FString& Name, cons
 		TArray<FConveyorBeltItem*> Items;
 		Belt->GetConveyorBeltItems(Items);
 		Data.SetNumberField(TEXT("items_in_chain_segment"), Items.Num());
+		// Which items, and the one furthest along, the next to leave by connection1
+		TMap<FString, int32> ByType;
+		const FConveyorBeltItem* Front = nullptr;
+		for (const FConveyorBeltItem* Item : Items)
+		{
+			if (!Item)
+			{
+				continue;
+			}
+			const UClass* ItemClass = Item->Item.GetItemClass();
+			ByType.FindOrAdd(ItemClass ? ItemClass->GetName() : FString{ TEXT("?") })++;
+			if (!Front || Item->Offset > Front->Offset)
+			{
+				Front = Item;
+			}
+		}
+		TSharedRef<FJsonObject> Types = MakeShared<FJsonObject>();
+		for (const TPair<FString, int32>& Entry : ByType)
+		{
+			Types->SetNumberField(Entry.Key, Entry.Value);
+		}
+		Data.SetObjectField(TEXT("items_by_type"), Types);
+		if (Front)
+		{
+			const UClass* FrontClass = Front->Item.GetItemClass();
+			Data.SetStringField(TEXT("front_item"), FrontClass ? FrontClass->GetName() : FString{ TEXT("?") });
+			Data.SetNumberField(TEXT("front_offset"), Front->Offset);
+		}
 		for (const TPair<const TCHAR*, UFGFactoryConnectionComponent*> End : { TPair<const TCHAR*, UFGFactoryConnectionComponent*>{ TEXT("connection0"), Belt->GetConnection0() },
 			TPair<const TCHAR*, UFGFactoryConnectionComponent*>{ TEXT("connection1"), Belt->GetConnection1() } })
 		{
