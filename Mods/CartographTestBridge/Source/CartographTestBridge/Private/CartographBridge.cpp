@@ -14,6 +14,9 @@
 #include "FGCharacterPlayer.h"
 #include "FGDismantleInterface.h"
 #include "FGGameMode.h"
+#include "FGGameRulesSubsystem.h"
+#include "FGGameState.h"
+#include "Resources/FGItemDescriptor.h"
 #include "FGLightweightBuildableSubsystem.h"
 #include "FGPlayerController.h"
 #include "FGRecipe.h"
@@ -46,7 +49,8 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.5.2");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.6.0");
+	constexpr const TCHAR* TestSavePrefix = TEXT("Cartograph_Test_");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
 	constexpr double PollInterval = 0.1;
@@ -92,9 +96,29 @@ namespace
 	bool ChangesTheWorld(const FString& Command)
 	{
 		return Command == TEXT("build") || Command == TEXT("dismantle") || Command == TEXT("save")
+			|| Command == TEXT("delete_save") || Command == TEXT("game_rules") || Command == TEXT("give_items")
 			|| Command == TEXT("load_save") || Command == TEXT("exit_to_menu")
 			|| Command == TEXT("machine_setup") || Command == TEXT("adopt")
 			|| Command == TEXT("set_layer") || Command == TEXT("set_z_filter") || Command == TEXT("set_view") || Command == TEXT("teleport");
+	}
+
+	// Only saves with the name the tests save under by convention are deleted. The name doesn't prove
+	// who made a save, what's to be deleted is for the one asking to list by name.
+	// Nothing but a plain name: it goes to the game as the name of a file.
+	bool IsNameOfTestSave(const FString& SaveName)
+	{
+		if (!SaveName.StartsWith(TestSavePrefix, ESearchCase::CaseSensitive) || SaveName.Len() > 120)
+		{
+			return false;
+		}
+		for (const TCHAR Character : SaveName)
+		{
+			if (!FChar::IsAlnum(Character) && Character != TEXT('_') && Character != TEXT('-'))
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 
 	double Percentile(const TArray<double>& Sorted, double Fraction)
@@ -809,6 +833,58 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 			}), nullptr);
 		return ECommandStatus::Running;
 	}
+	if (Name == TEXT("delete_save"))
+	{
+		FString SaveName;
+		if (!Args.TryGetStringField(TEXT("name"), SaveName) || SaveName.IsEmpty())
+		{
+			OutError = TEXT("name is required");
+			return ECommandStatus::Failed;
+		}
+		if (!IsNameOfTestSave(SaveName))
+		{
+			OutError = FString::Printf(TEXT("Only saves of tests are deleted, those have a name starting with %s"), TestSavePrefix);
+			return ECommandStatus::Failed;
+		}
+		// The session it's of has to be said as well, a name alone is given wrongly too easily
+		FString ExpectedSession;
+		if (!Args.TryGetStringField(TEXT("session"), ExpectedSession) || ExpectedSession.IsEmpty())
+		{
+			OutError = TEXT("session is required, the name of the session the save is of");
+			return ECommandStatus::Failed;
+		}
+		UFGSaveSystem* SaveSystem = UFGSaveSystem::Get(World);
+		if (!SaveSystem)
+		{
+			OutError = TEXT("There is no save system");
+			return ECommandStatus::Failed;
+		}
+		FSaveHeader Header;
+		if (!SaveSystem->LoadSaveGameHeaderSync(SaveName, Header))
+		{
+			OutError = FString::Printf(TEXT("Can't read the header of the save %s"), *SaveName);
+			return ECommandStatus::Failed;
+		}
+		Data.SetStringField(TEXT("session"), Header.SessionName);
+		Data.SetStringField(TEXT("map"), Header.MapName);
+		if (Header.SessionName != ExpectedSession)
+		{
+			OutError = FString::Printf(TEXT("The save is of the session %s, not of %s"), *Header.SessionName, *ExpectedSession);
+			return ECommandStatus::Failed;
+		}
+
+		// Through the save system of the game and not from the disk. Whether that's enough for a save to stay
+		// gone where saves are also kept elsewhere isn't known, it has to be looked at after starting the game again.
+		CallbackResult.Reset();
+		Command.bWaitingForCallback = true;
+		AddEvent(TEXT("delete_save_begin"));
+		SaveSystem->DeleteSaveFiles({ SaveName }, FOnDeleteSaveGameComplete::CreateLambda(
+			[this](bool bSucceeded, void*)
+			{
+				CallbackResult = TPair<bool, FString>{ bSucceeded, bSucceeded ? FString{} : FString{ TEXT("The game didn't delete the save") } };
+			}), nullptr);
+		return ECommandStatus::Running;
+	}
 	if (Name == TEXT("map_open") || Name == TEXT("map_close"))
 	{
 		AFGPlayerController* PlayerController = Cast<AFGPlayerController>(World->GetFirstPlayerController());
@@ -842,6 +918,89 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 	if (Name == TEXT("dismantle"))
 	{
 		return ContinueDismantle(Command, OutError);
+	}
+	if (Name == TEXT("game_rules"))
+	{
+		// What the advanced game settings set, for a world of tests. Each of them only when it's given, and what
+		// they are afterwards in any case, so without arguments it only reads. no_power leaves the power network
+		// out of a test; where that is what's tested, as in a lab with real generators, don't use it.
+		AFGGameState* GameState = World->GetGameState<AFGGameState>();
+		AFGGameRulesSubsystem* GameRules = AFGGameRulesSubsystem::Get(World);
+		if (!GameState || !GameRules)
+		{
+			OutError = TEXT("There is no game state or no game rules, is a game loaded?");
+			return ECommandStatus::Failed;
+		}
+
+		bool bValue = false;
+		if (Args.TryGetBoolField(TEXT("no_power"), bValue))
+		{
+			GameRules->SetNoPower(bValue);
+		}
+		if (Args.TryGetBoolField(TEXT("no_fuel"), bValue))
+		{
+			GameRules->SetNoFuelCost(bValue);
+		}
+		if (Args.TryGetBoolField(TEXT("no_cost"), bValue))
+		{
+			GameState->SetCheatNoCost(bValue);
+		}
+		if (Args.TryGetBoolField(TEXT("no_unlock_cost"), bValue))
+		{
+			GameRules->SetNoUnlockCost(bValue);
+		}
+		if (Args.TryGetBoolField(TEXT("unlock_all"), bValue) && bValue)
+		{
+			// Can't be taken back
+			GameRules->UnlockAllMileStoneSchematics();
+			GameRules->UnlockAllResearchSchematics();
+			GameRules->UnlockAllResourceSinkSchematics();
+			Data.SetBoolField(TEXT("unlocked_all"), true);
+		}
+
+		Data.SetBoolField(TEXT("no_power"), GameState->GetCheatNoPower());
+		Data.SetBoolField(TEXT("no_fuel"), GameState->GetCheatNoFuel());
+		Data.SetBoolField(TEXT("no_cost"), GameState->GetCheatNoCost());
+		Data.SetBoolField(TEXT("no_unlock_cost"), GameRules->GetNoUnlockCost());
+		Data.SetBoolField(TEXT("creative_mode"), GameState->IsCreativeModeEnabled());
+		return ECommandStatus::Succeeded;
+	}
+	if (Name == TEXT("give_items"))
+	{
+		// Into the player's own inventory, as far as there's room in it. What didn't fit is said, not dropped.
+		constexpr int32 MaxItems = 10000;
+		FString ItemPath;
+		int32 Count = 0;
+		if (!Args.TryGetStringField(TEXT("item"), ItemPath) || !Args.TryGetNumberField(TEXT("count"), Count)
+			|| Count <= 0 || Count > MaxItems)
+		{
+			OutError = FString::Printf(TEXT("item (the class path of an item) and count (1 to %d) are required"), MaxItems);
+			return ECommandStatus::Failed;
+		}
+		const TSubclassOf<UFGItemDescriptor> ItemClass = LoadClass<UFGItemDescriptor>(nullptr, *ItemPath);
+		if (!ItemClass)
+		{
+			OutError = FString::Printf(TEXT("Can't load the item %s"), *ItemPath);
+			return ECommandStatus::Failed;
+		}
+		const APlayerController* PlayerController = World->GetFirstPlayerController();
+		const AFGCharacterPlayer* Character = PlayerController ? Cast<AFGCharacterPlayer>(PlayerController->GetPawn()) : nullptr;
+		UFGInventoryComponent* Inventory = Character ? Character->GetInventory() : nullptr;
+		if (!Inventory)
+		{
+			OutError = TEXT("There is no player with an inventory");
+			return ECommandStatus::Failed;
+		}
+		const int32 Added = Inventory->AddStack(FInventoryStack{ Count, ItemClass }, true);
+		Data.SetStringField(TEXT("item"), ItemClass->GetPathName());
+		Data.SetNumberField(TEXT("requested"), Count);
+		Data.SetNumberField(TEXT("added"), Added);
+		if (Added == 0)
+		{
+			OutError = TEXT("Nothing fitted into the inventory");
+			return ECommandStatus::Failed;
+		}
+		return ECommandStatus::Succeeded;
 	}
 	if (Name == TEXT("teleport"))
 	{
@@ -1152,11 +1311,11 @@ FCartographBridge::ECommandStatus FCartographBridge::Continue(FBridgeCommand& Co
 		return ContinueDismantle(Command, OutError);
 	}
 
-	if (Name == TEXT("save"))
+	if (Name == TEXT("save") || Name == TEXT("delete_save"))
 	{
 		if (CallbackResult.IsSet())
 		{
-			AddEvent(TEXT("save_end"));
+			AddEvent(Name == TEXT("save") ? TEXT("save_end") : TEXT("delete_save_end"));
 			Command.Data->SetNumberField(TEXT("duration"), Now() - Command.TimeStart);
 			if (!CallbackResult->Key)
 			{
