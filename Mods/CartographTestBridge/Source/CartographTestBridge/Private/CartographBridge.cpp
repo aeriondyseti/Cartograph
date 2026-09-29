@@ -59,7 +59,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.6.3");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.6.4");
 	constexpr const TCHAR* TestSavePrefix = TEXT("Cartograph_Test_");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
@@ -977,7 +977,7 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 		return ECommandStatus::Succeeded;
 	}
 	if (Name == TEXT("power_link") || Name == TEXT("fuel") || Name == TEXT("power_state") || Name == TEXT("reset_fuse")
-		|| Name == TEXT("spline_link"))
+		|| Name == TEXT("spline_link") || Name == TEXT("belt_state"))
 	{
 		return RunPowerCommand(*World, Name, Args, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
 	}
@@ -2239,6 +2239,63 @@ namespace
 
 bool FCartographBridge::RunPowerCommand(UWorld& World, const FString& Name, const FJsonObject& Args, FJsonObject& Data, FString& OutError)
 {
+	if (Name == TEXT("belt_state"))
+	{
+		// Read only: what the game knows of a belt, whether it's in a conveyor chain (what moves the items),
+		// and what its ends are connected to. By group and index, or the first conveyor in a box, which outlasts a load.
+		AFGBuildableConveyorBase* Belt = nullptr;
+		FBox Box;
+		FString BoxError;
+		if (!Args.HasField(TEXT("group")) && ReadBox(Args, Box, BoxError))
+		{
+			const AFGBuildableSubsystem* BuildableSubsystem = AFGBuildableSubsystem::Get(&World);
+			for (AFGBuildable* Candidate : BuildableSubsystem ? BuildableSubsystem->GetAllBuildablesRef() : TArray<AFGBuildable*>{})
+			{
+				AFGBuildableConveyorBase* Conveyor = Cast<AFGBuildableConveyorBase>(Candidate);
+				if (Conveyor && Box.IsInsideOrOn(Conveyor->GetActorLocation()))
+				{
+					Belt = Conveyor;
+					break;
+				}
+			}
+			if (!Belt)
+			{
+				OutError = TEXT("No conveyor in that box");
+				return false;
+			}
+		}
+		else
+		{
+			AFGBuildable* Buildable = FindGroupMember(Args, TEXT("group"), TEXT("index"), OutError);
+			Belt = Cast<AFGBuildableConveyorBase>(Buildable);
+			if (!Belt)
+			{
+				OutError = Buildable ? TEXT("That's not a conveyor") : OutError;
+				return false;
+			}
+		}
+		Data.SetStringField(TEXT("class"), Belt->GetClass()->GetName());
+		Data.SetStringField(TEXT("name"), Belt->GetName());
+		Data.SetNumberField(TEXT("length"), Belt->GetLength());
+		Data.SetNumberField(TEXT("speed"), Belt->GetSpeed());
+		Data.SetBoolField(TEXT("has_chain_actor"), Belt->GetConveyorChainActor() != nullptr);
+		Data.SetBoolField(TEXT("has_next_tick_conveyor"), Belt->GetNextTickConveyor() != nullptr);
+		Data.SetBoolField(TEXT("is_stalled"), Belt->IsStalled());
+		Data.SetNumberField(TEXT("available_space"), Belt->GetAvailableSpace());
+		TArray<FConveyorBeltItem*> Items;
+		Belt->GetConveyorBeltItems(Items);
+		Data.SetNumberField(TEXT("items_in_chain_segment"), Items.Num());
+		for (const TPair<const TCHAR*, UFGFactoryConnectionComponent*> End : { TPair<const TCHAR*, UFGFactoryConnectionComponent*>{ TEXT("connection0"), Belt->GetConnection0() },
+			TPair<const TCHAR*, UFGFactoryConnectionComponent*>{ TEXT("connection1"), Belt->GetConnection1() } })
+		{
+			TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+			const UFGFactoryConnectionComponent* Other = End.Value ? End.Value->GetConnection() : nullptr;
+			Object->SetBoolField(TEXT("connected"), Other != nullptr);
+			Object->SetStringField(TEXT("to"), Other ? FString::Printf(TEXT("%s.%s"), *GetNameSafe(Other->GetOwner()), *Other->GetName()) : FString{});
+			Data.SetObjectField(End.Key, Object);
+		}
+		return true;
+	}
 	if (Name == TEXT("spline_link"))
 	{
 		// A conveyor belt or a pipe from an output of one building to an input of another, spawned by the game's own
