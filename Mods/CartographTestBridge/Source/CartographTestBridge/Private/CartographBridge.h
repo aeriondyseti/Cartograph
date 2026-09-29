@@ -100,6 +100,12 @@ struct FBridgeCommand
 	int32 Total = 0;
 	int32 SettledFrames = 0;
 	bool bWaitingForCallback = false;
+
+	// Where a build goes
+	bool bHasPlacement = false;
+	FVector Origin = FVector::ZeroVector;
+	FQuat Orientation = FQuat::Identity;
+	int32 SettledFramesMissedGround = 0;
 	TArray<int32> LightweightIndices;
 };
 
@@ -176,6 +182,11 @@ private:
 	TMap<FString, TArray<FBridgeBuildable>> Groups;
 
 	uint64 WorldBeginPlayCount = 0;
+
+	/// A save that has been asked to be loaded, and how many worlds had begun play by then.
+	/// The one to wait for is one that has begun after.
+	FString PendingLoadSave;
+	TOptional<uint64> PendingLoadGeneration;
 
 	/// What the game has called back with for the command that's waiting for it
 	TOptional<TPair<bool, FString>> CallbackResult;
