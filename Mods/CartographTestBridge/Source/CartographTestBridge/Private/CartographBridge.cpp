@@ -60,7 +60,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.6.6");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.6.7");
 	constexpr const TCHAR* TestSavePrefix = TEXT("Cartograph_Test_");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
@@ -979,7 +979,8 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 		return ECommandStatus::Succeeded;
 	}
 	if (Name == TEXT("power_link") || Name == TEXT("fuel") || Name == TEXT("power_state") || Name == TEXT("reset_fuse")
-		|| Name == TEXT("spline_link") || Name == TEXT("belt_state") || Name == TEXT("factory_state") || Name == TEXT("stock"))
+		|| Name == TEXT("spline_link") || Name == TEXT("belt_state") || Name == TEXT("factory_state") || Name == TEXT("stock")
+		|| Name == TEXT("pipe_state"))
 	{
 		return RunPowerCommand(*World, Name, Args, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
 	}
@@ -2241,6 +2242,61 @@ namespace
 
 bool FCartographBridge::RunPowerCommand(UWorld& World, const FString& Name, const FJsonObject& Args, FJsonObject& Data, FString& OutError)
 {
+	if (Name == TEXT("pipe_state"))
+	{
+		// Read only: every building in a box with pipe connections, pipes and junctions included. For each connection
+		// its type, what it's connected to, its network, and the fluid that network has been given.
+		FBox Box;
+		if (!ReadBox(Args, Box, OutError))
+		{
+			return false;
+		}
+		const AFGBuildableSubsystem* BuildableSubsystem = AFGBuildableSubsystem::Get(&World);
+		TArray<TSharedPtr<FJsonValue>> Buildings;
+		for (AFGBuildable* Candidate : BuildableSubsystem ? BuildableSubsystem->GetAllBuildablesRef() : TArray<AFGBuildable*>{})
+		{
+			if (!Candidate || !Box.IsInsideOrOn(Candidate->GetActorLocation()) || Buildings.Num() >= 200)
+			{
+				continue;
+			}
+			TArray<UFGPipeConnectionComponentBase*> Connections;
+			Candidate->GetComponents(Connections);
+			if (Connections.IsEmpty())
+			{
+				continue;
+			}
+			TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+			Object->SetStringField(TEXT("class"), Candidate->GetClass()->GetName());
+			Object->SetStringField(TEXT("name"), Candidate->GetName());
+			const FVector Location = Candidate->GetActorLocation();
+			Object->SetArrayField(TEXT("location"), {
+				MakeShared<FJsonValueNumber>(Location.X), MakeShared<FJsonValueNumber>(Location.Y), MakeShared<FJsonValueNumber>(Location.Z) });
+			TArray<TSharedPtr<FJsonValue>> ConnectionValues;
+			for (const UFGPipeConnectionComponentBase* Connection : Connections)
+			{
+				if (!Connection)
+				{
+					continue;
+				}
+				TSharedRef<FJsonObject> ConnectionObject = MakeShared<FJsonObject>();
+				ConnectionObject->SetStringField(TEXT("name"), Connection->GetName());
+				ConnectionObject->SetStringField(TEXT("type"), UEnum::GetValueAsString(Connection->GetPipeConnectionType()));
+				const UFGPipeConnectionComponentBase* Other = Connection->GetConnection();
+				ConnectionObject->SetStringField(TEXT("connected_to"), Other ? FString::Printf(TEXT("%s.%s"), *GetNameSafe(Other->GetOwner()), *Other->GetName()) : FString{});
+				if (const UFGPipeConnectionComponent* Pipe = Cast<UFGPipeConnectionComponent>(Connection))
+				{
+					ConnectionObject->SetNumberField(TEXT("network_id"), Pipe->GetPipeNetworkID());
+					const TSubclassOf<UFGItemDescriptor> Fluid = Pipe->GetFluidDescriptor();
+					ConnectionObject->SetStringField(TEXT("fluid"), Fluid ? Fluid->GetName() : FString{});
+				}
+				ConnectionValues.Add(MakeShared<FJsonValueObject>(ConnectionObject));
+			}
+			Object->SetArrayField(TEXT("connections"), ConnectionValues);
+			Buildings.Add(MakeShared<FJsonValueObject>(Object));
+		}
+		Data.SetArrayField(TEXT("buildings"), Buildings);
+		return true;
+	}
 	if (Name == TEXT("factory_state"))
 	{
 		// Read only: every factory building in a box, whether it runs, its recipe and inputs, and each belt
