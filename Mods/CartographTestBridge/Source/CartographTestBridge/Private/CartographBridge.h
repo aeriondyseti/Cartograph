@@ -143,6 +143,8 @@ private:
 	bool ProbeCanvas(UWorld& World, FJsonObject& Data, FString& OutError);
 	bool SetUpMachines(UWorld& World, const FJsonObject& Args, FJsonObject& Data, FString& OutError);
 	bool ListMachines(UWorld& World, const FJsonObject& Args, FJsonObject& Data, FString& OutError);
+	bool RunPowerCommand(UWorld& World, const FString& Name, const FJsonObject& Args, FJsonObject& Data, FString& OutError);
+	AFGBuildable* FindGroupMember(const FJsonObject& Args, const TCHAR* GroupField, const TCHAR* IndexField, FString& OutError);
 	bool AdoptBuildables(UWorld& World, const FJsonObject& Args, FJsonObject& Data, FString& OutError);
 	void StopSampler(const FString& Name, FJsonObject& Data);
 
