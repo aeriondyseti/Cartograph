@@ -84,7 +84,9 @@ namespace
 	bool ChangesTheWorld(const FString& Command)
 	{
 		return Command == TEXT("build") || Command == TEXT("dismantle") || Command == TEXT("save")
-			|| Command == TEXT("load_save") || Command == TEXT("exit_to_menu");
+			|| Command == TEXT("load_save") || Command == TEXT("exit_to_menu")
+			|| Command == TEXT("machine_setup") || Command == TEXT("adopt")
+			|| Command == TEXT("set_layer") || Command == TEXT("set_z_filter");
 	}
 
 	double Percentile(const TArray<double>& Sorted, double Fraction)
