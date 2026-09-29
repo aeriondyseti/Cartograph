@@ -22,6 +22,11 @@
 #include "FGPowerConnectionComponent.h"
 #include "FGPowerCircuit.h"
 #include "FGCircuitSubsystem.h"
+#include "FGFactoryConnectionComponent.h"
+#include "FGPipeConnectionComponent.h"
+#include "Buildables/FGBuildableConveyorBase.h"
+#include "Buildables/FGBuildablePipeBase.h"
+#include "Tests/FGTestBlueprintFunctionLibrary.h"
 #include "FGLightweightBuildableSubsystem.h"
 #include "FGPlayerController.h"
 #include "FGRecipe.h"
@@ -54,7 +59,7 @@
 
 namespace
 {
-	constexpr const TCHAR* BridgeVersion = TEXT("0.6.1");
+	constexpr const TCHAR* BridgeVersion = TEXT("0.6.3");
 	constexpr const TCHAR* TestSavePrefix = TEXT("Cartograph_Test_");
 	constexpr const TCHAR* DefaultMap = TEXT("/Game/FactoryGame/Map/GameLevel01/Persistent_Level");
 
@@ -102,7 +107,7 @@ namespace
 	{
 		return Command == TEXT("build") || Command == TEXT("dismantle") || Command == TEXT("save")
 			|| Command == TEXT("delete_save") || Command == TEXT("game_rules") || Command == TEXT("give_items")
-			|| Command == TEXT("power_link") || Command == TEXT("fuel") || Command == TEXT("reset_fuse")
+			|| Command == TEXT("power_link") || Command == TEXT("fuel") || Command == TEXT("reset_fuse") || Command == TEXT("spline_link")
 			|| Command == TEXT("load_save") || Command == TEXT("exit_to_menu")
 			|| Command == TEXT("machine_setup") || Command == TEXT("adopt")
 			|| Command == TEXT("set_layer") || Command == TEXT("set_z_filter") || Command == TEXT("set_view") || Command == TEXT("teleport");
@@ -971,7 +976,8 @@ FCartographBridge::ECommandStatus FCartographBridge::Start(FBridgeCommand& Comma
 		Data.SetBoolField(TEXT("creative_mode"), GameState->IsCreativeModeEnabled());
 		return ECommandStatus::Succeeded;
 	}
-	if (Name == TEXT("power_link") || Name == TEXT("fuel") || Name == TEXT("power_state") || Name == TEXT("reset_fuse"))
+	if (Name == TEXT("power_link") || Name == TEXT("fuel") || Name == TEXT("power_state") || Name == TEXT("reset_fuse")
+		|| Name == TEXT("spline_link"))
 	{
 		return RunPowerCommand(*World, Name, Args, Data, OutError) ? ECommandStatus::Succeeded : ECommandStatus::Failed;
 	}
@@ -2030,6 +2036,7 @@ bool FCartographBridge::SetUpMachines(UWorld& World, const FJsonObject& Args, FJ
 
 	int32 SetUp = 0;
 	int32 NotAMachine = 0;
+	int32 CantMake = 0;
 	int32 ItemsAdded = 0;
 	for (const FBridgeBuildable& Buildable : *Group)
 	{
@@ -2037,6 +2044,15 @@ bool FCartographBridge::SetUpMachines(UWorld& World, const FJsonObject& Args, FJ
 		if (!Machine)
 		{
 			NotAMachine++;
+			continue;
+		}
+		// The game doesn't stop a recipe being set that the building can't make, it only clears it when the save is
+		// loaded again, inventories and all. So it isn't set here either.
+		TArray<TSubclassOf<UFGRecipe>> Available;
+		Machine->GetAvailableRecipes(Available);
+		if (!Available.Contains(Recipe))
+		{
+			CantMake++;
 			continue;
 		}
 
@@ -2065,10 +2081,12 @@ bool FCartographBridge::SetUpMachines(UWorld& World, const FJsonObject& Args, FJ
 	Data.SetStringField(TEXT("group"), GroupName);
 	Data.SetNumberField(TEXT("set_up"), SetUp);
 	Data.SetNumberField(TEXT("not_a_machine"), NotAMachine);
+	Data.SetNumberField(TEXT("cant_make_recipe"), CantMake);
 	Data.SetNumberField(TEXT("items_added"), ItemsAdded);
 	if (SetUp == 0)
 	{
-		OutError = TEXT("None of the group is a machine that takes a recipe");
+		OutError = CantMake > 0 ? TEXT("None of the machines of the group can make that recipe")
+			: TEXT("None of the group is a machine that takes a recipe");
 		return false;
 	}
 	return true;
@@ -2152,8 +2170,159 @@ namespace
 }
 
 
+namespace
+{
+	// A connection of a building that's free and points the way asked: out of the first building, into the second.
+	// By component name when one is given.
+	UFGConnectionComponent* FreeLogisticsConnection(const AFGBuildable& Buildable, bool bIsPipe, bool bOutgoing, const FString& WantedName, TArray<FString>& OutFree)
+	{
+		UFGConnectionComponent* Found = nullptr;
+		if (bIsPipe)
+		{
+			TArray<UFGPipeConnectionComponentBase*> Connections;
+			Buildable.GetComponents(Connections);
+			for (UFGPipeConnectionComponentBase* Connection : Connections)
+			{
+				if (!Connection || Connection->IsConnected())
+				{
+					continue;
+				}
+				const EPipeConnectionType Type = Connection->GetPipeConnectionType();
+				const bool bFits = Type == EPipeConnectionType::PCT_ANY
+					|| Type == (bOutgoing ? EPipeConnectionType::PCT_PRODUCER : EPipeConnectionType::PCT_CONSUMER);
+				if (!bFits)
+				{
+					continue;
+				}
+				OutFree.Add(Connection->GetName());
+				if (!Found && (WantedName.IsEmpty() || Connection->GetName() == WantedName))
+				{
+					Found = Connection;
+				}
+			}
+		}
+		else
+		{
+			TArray<UFGFactoryConnectionComponent*> Connections;
+			Buildable.GetComponents(Connections);
+			for (UFGFactoryConnectionComponent* Connection : Connections)
+			{
+				if (!Connection || Connection->IsConnected()
+					|| Connection->GetDirection() != (bOutgoing ? EFactoryConnectionDirection::FCD_OUTPUT : EFactoryConnectionDirection::FCD_INPUT))
+				{
+					continue;
+				}
+				OutFree.Add(Connection->GetName());
+				if (!Found && (WantedName.IsEmpty() || Connection->GetName() == WantedName))
+				{
+					Found = Connection;
+				}
+			}
+		}
+		return Found;
+	}
+
+	bool IsConnectedTo(const UFGConnectionComponent* A, const UFGConnectionComponent* B)
+	{
+		if (const UFGFactoryConnectionComponent* Factory = Cast<UFGFactoryConnectionComponent>(A))
+		{
+			return Factory->GetConnection() == B;
+		}
+		if (const UFGPipeConnectionComponentBase* Pipe = Cast<UFGPipeConnectionComponentBase>(A))
+		{
+			return Pipe->GetConnection() == B;
+		}
+		return false;
+	}
+}
+
+
 bool FCartographBridge::RunPowerCommand(UWorld& World, const FString& Name, const FJsonObject& Args, FJsonObject& Data, FString& OutError)
 {
+	if (Name == TEXT("spline_link"))
+	{
+		// A conveyor belt or a pipe from an output of one building to an input of another, spawned by the game's own
+		// testing library the way it routes and connects one. Whether both ends are connected is then read back.
+		AFGBuildable* First = FindGroupMember(Args, TEXT("from_group"), TEXT("from_index"), OutError);
+		AFGBuildable* Second = First ? FindGroupMember(Args, TEXT("to_group"), TEXT("to_index"), OutError) : nullptr;
+		if (!First || !Second)
+		{
+			return false;
+		}
+		FString RecipePath;
+		if (!Args.TryGetStringField(TEXT("recipe"), RecipePath))
+		{
+			OutError = TEXT("recipe is required, that of a conveyor belt or a pipe");
+			return false;
+		}
+		const TSubclassOf<UFGRecipe> Recipe = LoadClass<UFGRecipe>(nullptr, *RecipePath);
+		const TArray<FItemAmount> Products = Recipe ? UFGRecipe::GetProducts(Recipe) : TArray<FItemAmount>{};
+		const TSubclassOf<UFGBuildingDescriptor> Descriptor = Products.IsEmpty() ? nullptr : TSubclassOf<UFGBuildingDescriptor>{ Products[0].ItemClass };
+		const TSubclassOf<AFGBuildable> SplineClass = Descriptor ? UFGBuildingDescriptor::GetBuildableClass(Descriptor) : nullptr;
+		const bool bIsBelt = SplineClass && SplineClass->IsChildOf<AFGBuildableConveyorBase>();
+		const bool bIsPipe = SplineClass && SplineClass->IsChildOf<AFGBuildablePipeBase>();
+		if (!bIsBelt && !bIsPipe)
+		{
+			OutError = FString::Printf(TEXT("%s makes neither a conveyor belt nor a pipe"), *RecipePath);
+			return false;
+		}
+
+		FString FromName, ToName;
+		Args.TryGetStringField(TEXT("from_connector"), FromName);
+		Args.TryGetStringField(TEXT("to_connector"), ToName);
+		TArray<FString> FreeFrom, FreeTo;
+		UFGConnectionComponent* From = FreeLogisticsConnection(*First, bIsPipe, true, FromName, FreeFrom);
+		UFGConnectionComponent* To = FreeLogisticsConnection(*Second, bIsPipe, false, ToName, FreeTo);
+		if (!From || !To)
+		{
+			OutError = FString::Printf(TEXT("No free %s %s. Free outputs on the first: [%s]; free inputs on the second: [%s]"),
+				bIsPipe ? TEXT("pipe") : TEXT("belt"), From ? TEXT("input on the second") : TEXT("output on the first"),
+				*FString::Join(FreeFrom, TEXT(", ")), *FString::Join(FreeTo, TEXT(", ")));
+			return false;
+		}
+		Data.SetStringField(TEXT("from_connector"), From->GetName());
+		Data.SetStringField(TEXT("to_connector"), To->GetName());
+		Data.SetNumberField(TEXT("distance"), FVector::Distance(From->GetComponentLocation(), To->GetComponentLocation()));
+
+		AFGBuildable* Spline = UFGTestBlueprintFunctionLibrary::SpawnSplineBuildable(SplineClass, From, To);
+		if (!Spline)
+		{
+			OutError = TEXT("The game didn't spawn it");
+			return false;
+		}
+		Spline->SetBuiltWithRecipe(Recipe);
+
+		FString SplineGroup = bIsPipe ? TEXT("pipes") : TEXT("belts");
+		Args.TryGetStringField(TEXT("spline_group"), SplineGroup);
+		Groups.FindOrAdd(SplineGroup).Add(FBridgeBuildable{ SplineClass, Spline->GetActorTransform(), Spline });
+		Data.SetStringField(TEXT("spline_group"), SplineGroup);
+		Data.SetNumberField(TEXT("spline_index"), Groups[SplineGroup].Num() - 1);
+		Data.SetStringField(TEXT("class"), SplineClass->GetName());
+
+		// Both of the building's connections read back: connected, and to this spline
+		UFGConnectionComponent* End0 = nullptr;
+		UFGConnectionComponent* End1 = nullptr;
+		if (const AFGBuildableConveyorBase* Belt = Cast<AFGBuildableConveyorBase>(Spline))
+		{
+			End0 = Belt->GetConnection0();
+			End1 = Belt->GetConnection1();
+		}
+		else if (const AFGBuildablePipeBase* Pipe = Cast<AFGBuildablePipeBase>(Spline))
+		{
+			End0 = Pipe->GetConnection0();
+			End1 = Pipe->GetConnection1();
+		}
+		const bool bFromConnected = (End0 && IsConnectedTo(From, End0)) || (End1 && IsConnectedTo(From, End1));
+		const bool bToConnected = (End0 && IsConnectedTo(To, End0)) || (End1 && IsConnectedTo(To, End1));
+		Data.SetBoolField(TEXT("from_connected"), bFromConnected);
+		Data.SetBoolField(TEXT("to_connected"), bToConnected);
+		if (!bFromConnected || !bToConnected)
+		{
+			OutError = TEXT("It was spawned but isn't connected at both ends, it stays in its group to be looked at");
+			return false;
+		}
+		return true;
+	}
 	if (Name == TEXT("power_link"))
 	{
 		// A power line between two buildings the bridge has built, the way a player's is connected:
