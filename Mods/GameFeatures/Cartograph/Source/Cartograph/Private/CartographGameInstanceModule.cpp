@@ -365,6 +365,16 @@ void UCartographGameInstanceModule::OnWorldLoaded(UWorld* World)
 	//ShouldInitialize = true;  // It's too late here, the buildables are already registered. Moved to ModSubSystem.
 	IsClient = GetWorld()->IsNetMode(NM_Client);
 
+	// Latch the VRAM-related config for this world. The render resolution in particular must stay fixed
+	// while loaded, because building screen-positions are cached against it.
+	{
+		const FCartograph_ConfigStruct Config = FCartograph_ConfigStruct::GetActiveConfig(World);
+		GRenderTextureSize = RenderResolutionToPixels(static_cast<ECartographRenderResolution>(Config.RenderResolution));
+		bGenerateMips = Config.GenerateMapMips;
+		bFreeRenderTargetWhenClosed = Config.FreeRenderTargetWhenMapClosed;
+		CARTO_LOG("Render size: %d, Mips: %d, FreeWhenClosed: %d", GRenderTextureSize, bGenerateMips, bFreeRenderTargetWhenClosed);
+	}
+
 	if (!IsClient)
 	{
 		// Wait for ACartographModSubsystem to initialize
@@ -389,9 +399,25 @@ void UCartographGameInstanceModule::OnWorldLoaded(UWorld* World)
 			});
 	}
 
-	if (!FPlatformProperties::IsServerOnly())
+	if (!FPlatformProperties::IsServerOnly() && RenderTarget)
 	{
-		UKismetRenderingLibrary::ClearRenderTarget2D(this, RenderTarget, { 0, 0, 0, 0 });
+		// The asset loads at its authored size (historically 8192). Reconfigure it down to the configured
+		// resolution with mips disabled, then either keep it resident or free it until the map is opened.
+		RenderTarget->RenderTargetFormat = RTF_RGBA8;
+		RenderTarget->bAutoGenerateMips = bGenerateMips;
+		RenderTarget->ClearColor = FLinearColor::Transparent;
+		RenderTarget->SizeX = GRenderTextureSize;
+		RenderTarget->SizeY = GRenderTextureSize;
+
+		if (bFreeRenderTargetWhenClosed)
+		{
+			// Drop the GPU allocation that came in with the asset; it is recreated on first map open.
+			ReleaseRenderTargetResource();
+		}
+		else
+		{
+			RenderTarget->UpdateResourceImmediate(true);
+		}
 	}
 }
 
@@ -621,6 +647,19 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 		co_return;
 	}
 
+	// The CPU-side building data (and Z-filter bounds) is now up to date. If the map isn't being viewed,
+	// stop here: skip all GPU work and keep the render target deallocated until the player opens the map.
+	if (!bMapVisible)
+	{
+		co_return;
+	}
+
+	EnsureRenderTargetReady();
+	if (!RenderTarget || !RenderTarget->GetResource())
+	{
+		co_return;
+	}
+
 	// Sometimes lines go crazy (goes to the top or far right) if we don't delay.
 	// My guess is because EndDraw and BeginDraw are called in the same frame, so I'm putting it here.
 	co_await UE5Coro::Latent::NextTick();
@@ -632,7 +671,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 
 	if (IsRedrawingEntirely)
 	{
-		ScissorArea = { 0, 0, RENDER_TEXTURE_SIZE, RENDER_TEXTURE_SIZE };
+		ScissorArea = { 0, 0, static_cast<uint32>(GRenderTextureSize), static_cast<uint32>(GRenderTextureSize) };
 	}
 	else
 	{
@@ -640,8 +679,8 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
         const FVector2D MaxScreenPosition = world_position_to_screen_position(RedrawArea.Max, FVector::ZeroVector);
 		const auto MinIntX = static_cast<uint32>(FMath::Max(0, FMath::FloorToInt(MinScreenPosition.X)));
         const auto MinIntY = static_cast<uint32>(FMath::Max(0, FMath::FloorToInt(MinScreenPosition.Y)));
-        const auto MaxIntX = static_cast<uint32>(FMath::Min(RENDER_TEXTURE_SIZE, FMath::CeilToInt(MaxScreenPosition.X)));
-        const auto MaxIntY = static_cast<uint32>(FMath::Min(RENDER_TEXTURE_SIZE, FMath::CeilToInt(MaxScreenPosition.Y)));
+        const auto MaxIntX = static_cast<uint32>(FMath::Min(GRenderTextureSize, FMath::CeilToInt(MaxScreenPosition.X)));
+        const auto MaxIntY = static_cast<uint32>(FMath::Min(GRenderTextureSize, FMath::CeilToInt(MaxScreenPosition.Y)));
         ScissorArea = { MinIntX, MinIntY, MaxIntX, MaxIntY };
         RedrawArea = {
         	screen_position_to_world_position(FVector2D{ static_cast<double>(MinIntX), static_cast<double>(MinIntY) }),
@@ -652,7 +691,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 
 	FCanvasTileItem ClearItem{
 		{ 0, 0 },
-		{ RENDER_TEXTURE_SIZE, RENDER_TEXTURE_SIZE },
+		{ static_cast<double>(GRenderTextureSize), static_cast<double>(GRenderTextureSize) },
 		{ 0, 0, 0, 0 }
 	};
 	ClearItem.BlendMode = SE_BLEND_Opaque;
@@ -762,7 +801,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 			FCanvasTileItem TileItem{
 				ScreenPosition,
 				LoadedTexture->GetResource(),
-				{ Size.X * PIXEL_PER_CENTIMETER[0], Size.Y * PIXEL_PER_CENTIMETER[1] },
+				{ Size.X * pixel_per_centimeter_x(), Size.Y * pixel_per_centimeter_y() },
 				{ 0, 0 },
 				{ 1, 1 },
 				FLinearColor::White
@@ -790,7 +829,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 
 			FCanvasTileItem TileItem{
 				ScreenPosition,
-				{ Size.X * PIXEL_PER_CENTIMETER[0], Size.Y * PIXEL_PER_CENTIMETER[1] },
+				{ Size.X * pixel_per_centimeter_x(), Size.Y * pixel_per_centimeter_y() },
 				CategoryData->MainColor
 			};
 			TileItem.PivotPoint = { 0.5, 0.5 };
@@ -904,12 +943,54 @@ void UCartographGameInstanceModule::OnCoroutineFinishedOrCancelled()
 
 	if (!IsPendingRedraw)
 	{
+		// If the map was closed while this draw was still in flight, free the VRAM now that it's done.
+		if (bFreeRenderTargetWhenClosed)
+		{
+			if (!bMapVisible)
+			{
+				ReleaseRenderTargetResource();
+			}
+		}
 		return;
 	}
 
 	// The coroutine is also on the game thread, so I think no data race here.
     IsPendingRedraw = false;
 	ExecuteRedrawMapCoroutine(IsPendingRedrawEntire);
+}
+
+
+void UCartographGameInstanceModule::EnsureRenderTargetReady()
+{
+	if (FPlatformProperties::IsServerOnly() || !RenderTarget)
+	{
+		return;
+	}
+
+	RenderTarget->RenderTargetFormat = RTF_RGBA8;
+	RenderTarget->bAutoGenerateMips = bGenerateMips;
+	RenderTarget->ClearColor = FLinearColor::Transparent;
+
+	if (RenderTarget->SizeX != GRenderTextureSize || RenderTarget->SizeY != GRenderTextureSize)
+	{
+		// Resize (also (re)allocates the GPU resource and clears to ClearColor).
+		RenderTarget->InitAutoFormat(GRenderTextureSize, GRenderTextureSize);
+	}
+	else if (!RenderTarget->GetResource())
+	{
+		// Right size, but the GPU resource was previously released (map was closed) — bring it back.
+		RenderTarget->UpdateResourceImmediate(true);
+	}
+}
+
+
+void UCartographGameInstanceModule::ReleaseRenderTargetResource()
+{
+	if (RenderTarget)
+	{
+		// Free the GPU/RHI allocation but keep the UObject so widget/material bindings remain valid.
+		RenderTarget->ReleaseResource();
+	}
 }
 
 
@@ -1278,8 +1359,13 @@ TArray<FString> UCartographGameInstanceModule::GetLayerCategoryOptions() const
 }
 
 
-void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Widget) const
+void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Widget)
 {
+	// Map is now on screen: (re)allocate the render target and repaint the current building data into it.
+	bMapVisible = true;
+	EnsureRenderTargetReady();
+	RedrawMap(true);
+
 	UWidget* Menu = Widget->WidgetTree->FindWidget("CartographMenu");
 	CARTO_LOG_ERROR_RETURN_IF_NULL(Menu);
 	Menu->SetVisibility(ESlateVisibility::Collapsed);
@@ -1293,6 +1379,22 @@ void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Wid
 
 	FOutputDeviceNull Ar;
 	Button->CallFunctionByNameWithArguments(TEXT("SetShowHideText"), Ar, nullptr, true);
+}
+
+
+void UCartographGameInstanceModule::OnVanillaMapMenuHidden()
+{
+	// Map closed: free the render target's VRAM (deferred until any in-flight redraw finishes).
+	bMapVisible = false;
+
+	if (bFreeRenderTargetWhenClosed)
+	{
+		if (Coroutine.IsDone())
+		{
+			ReleaseRenderTargetResource();
+		}
+		// else: OnCoroutineFinishedOrCancelled releases it once the current draw completes.
+	}
 }
 #pragma endregion
 
